@@ -1,19 +1,29 @@
 const express = require('express');
 const path = require('path');
 const app = express();
-
-// Puerto que proporciona Render o 3000 por defecto para desarrollo local
 const PORT = process.env.PORT || 3000;
 
-// Servir archivos estáticos desde el directorio raíz
-app.use(express.static(__dirname));
+// Determinar la ruta correcta
+const rootDir = path.resolve(__dirname);
+console.log("Directorio raíz:", rootDir);
 
-// Ruta para servir el index.html
+// Servir archivos estáticos
+app.use(express.static(rootDir));
+
+// Ruta para el index.html
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  const indexPath = path.join(rootDir, 'index.html');
+  console.log("Intentando servir:", indexPath);
+  
+  // Verificar si el archivo existe
+  const fs = require('fs');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send('Archivo index.html no encontrado. Ruta: ' + indexPath);
+  }
 });
 
-// Iniciar el servidor
 app.listen(PORT, () => {
   console.log(`Servidor iniciado en http://localhost:${PORT}`);
 });
