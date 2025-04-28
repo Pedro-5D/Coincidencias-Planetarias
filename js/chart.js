@@ -596,6 +596,28 @@ document.addEventListener('DOMContentLoaded', function() {
         
         return asc;
     }
+
+// Función para determinar el signo basado en la longitud
+function getSignFromLongitude(longitude) {
+    longitude = longitude % 360;
+    
+    for (const sign of SIGNS) {
+        const end = (sign.start + sign.length) % 360;
+        if (sign.start <= end) {
+            // Caso normal
+            if (longitude >= sign.start && longitude < end) {
+                return sign.name;
+            }
+        } else {
+            // Caso especial que cruza 0°
+            if (longitude >= sign.start || longitude < end) {
+                return sign.name;
+            }
+        }
+    }
+    
+    return "ARIES"; // Por defecto
+}
     
     // Función para renderizar la carta astral
     function renderChart() {
