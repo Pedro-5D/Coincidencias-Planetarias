@@ -618,6 +618,16 @@ function getSignFromLongitude(longitude) {
     
     return "ARIES"; // Por defecto
 }
+
+    // Determinar si un nacimiento es seco o húmedo
+function isDryBirth(sunLongitude, ascLongitude) {
+    // Es seco cuando el Sol está entre las casas 6 y 11 (inclusive)
+    const diff = (sunLongitude - ascLongitude) % 360;
+    const house = Math.floor(diff / 30) + 1;
+    
+    // Es seco si el Sol está en las casas 6 a 11
+    return house >= 6 && house <= 11;
+}
     
     // Función para renderizar la carta astral
     function renderChart() {
