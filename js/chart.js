@@ -1,120 +1,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Constantes
     const PLANET_DATA = {
-        'SOL': { numero: 1     
-    // Obtener color para un planeta según su posición
-    function getPlanetColor(planet, longitude) {
-        if (planet === 'ASC' || planet === 'MC' || planet === 'DSC' || planet === 'IC') return '#000000';
-        
-        if (planet === 'JÚPITER') {
-            if ((longitude >= 306.00 && longitude <= 360.00) || (longitude >= 0.00 && longitude <= 150.00)) 
-                return COLORS.BLUE;
-            if (longitude > 150.00 && longitude < 306.00) 
-                return COLORS.RED;
-        }
-        
-        if (planet === 'SATURNO') {
-            if ((longitude >= 330.00 && longitude <= 360.00) || (longitude >= 0.00 && longitude <= 150.00))
-                return COLORS.YELLOW;
-            if (longitude > 240.00 && longitude <= 252.00) return COLORS.YELLOW;
-            if (longitude > 252.00 && longitude <= 330.00) return COLORS.RED;
-            if (longitude > 150.00 && longitude <= 240.00) return COLORS.RED;
-            return COLORS.YELLOW;
-        }
-        
-        if (longitude > 150.00 && longitude <= 330.00) {
-            switch(planet) {
-                case 'SOL': case 'MERCURIO': case 'URANO': return COLORS.GREEN;
-                case 'VENUS': case 'LUNA': return COLORS.YELLOW;
-                case 'MARTE': case 'PLUTÓN': return COLORS.BLUE;
-                case 'NEPTUNO': return COLORS.RED;
-                default: return '#000000';
-            }
-        } else {
-            switch(planet) {
-                case 'SOL': case 'MARTE': case 'PLUTÓN': return COLORS.RED;
-                case 'VENUS': return COLORS.GREEN;
-                case 'MERCURIO': case 'URANO': return COLORS.YELLOW;
-                case 'LUNA': case 'NEPTUNO': return COLORS.BLUE;
-                default: return '#000000';
-            }
-        }
-    }
-    
-    // Función para crear path SVG de arco
-    function createArcPath(startAngle, endAngle) {
-        const start = ((startAngle - 90) * Math.PI) / 180;
-        const end = ((endAngle - 90) * Math.PI) / 180;
-        
-        const x1 = DIMENSIONS.centerX + DIMENSIONS.radius * Math.cos(start);
-        const y1 = DIMENSIONS.centerY + DIMENSIONS.radius * Math.sin(start);
-        const x2 = DIMENSIONS.centerX + DIMENSIONS.radius * Math.cos(end);
-        const y2 = DIMENSIONS.centerY + DIMENSIONS.radius * Math.sin(end);
-        
-        const x1Inner = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(start);
-        const y1Inner = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(start);
-        const x2Inner = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(end);
-        const y2Inner = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(end);
-        
-        const largeArcFlag = end - start <= Math.PI ? "0" : "1";
-        
-        return `M ${x1} ${y1} A ${DIMENSIONS.radius} ${DIMENSIONS.radius} 0 ${largeArcFlag} 1 ${x2} ${y2} L ${x2Inner} ${y2Inner} A ${DIMENSIONS.innerRadius} ${DIMENSIONS.innerRadius} 0 ${largeArcFlag} 0 ${x1Inner} ${y1Inner} Z`;
-    }
-    
-    // Función para mostrar un mensaje de error
-    function showError(message, isError = true) {
-        errorMsg.textContent = message;
-        errorMsg.classList.remove('hidden');
-        
-        if (isError) {
-            errorMsg.classList.add('text-red-500');
-            errorMsg.classList.remove('text-blue-500');
-        } else {
-            errorMsg.classList.add('text-blue-500');
-            errorMsg.classList.remove('text-red-500');
-        }
-    }
-    
-    // Función para limpiar mensaje de error
-    function clearError() {
-        errorMsg.textContent = '';
-        errorMsg.classList.add('hidden');
-    }
-    
-    // Función para crear elementos SVG
-    function appendSVG(tag, attributes) {
-        const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
-        for (const [key, value] of Object.entries(attributes)) {
-            element.setAttribute(key, value);
-        }
-        chartSvg.appendChild(element);
-        return element;
-    }
-    
-    // Función para formatear fecha
-    function formatDate(date) {
-        if (!(date instanceof Date)) return '';
-        
-        const day = date.getDate().toString().padStart(2, '0');
-        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-        const year = date.getFullYear();
-        
-        return `${day}/${month}/${year}`;
-    }
-    
-    // Función de debounce para evitar demasiadas llamadas a la API
-    function debounce(func, wait) {
-        let timeout;
-        return function(...args) {
-            const context = this;
-            clearTimeout(timeout);
-            timeout = setTimeout(() => func.apply(context, args), wait);
-        };
-    }
-    
-    // Iniciar la aplicación
-    init();
-},
+        'SOL': { numero: 1 },
         'LUNA': { numero: 6 },
         'MERCURIO': { numero: 4 },
         'VENUS': { numero: 3 },
@@ -257,6 +144,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const transitPositionsContainer = document.getElementById('transit-positions-container');
     const transitPositions = document.getElementById('transit-positions');
     const interChartAspectsContainer = document.getElementById('inter-chart-aspects-container');
+    const internalAspects = document.getElementById('internal-aspects');
+    const interChartAspects = document.getElementById('inter-chart-aspects');
     
     // Inicialización
     function init() {
@@ -286,7 +175,7 @@ document.addEventListener('DOMContentLoaded', function() {
         toggleTransits();
     }
     
-    // Función para manejar la búsqueda de ciudades
+    // Función para manejar la búsqueda de ciudades usando Geoapify
     function handleCitySearch(searchText, isTransit) {
         const searchQuery = searchText.trim();
         const resultsContainer = isTransit ? transitCityResults : natalCityResults;
@@ -297,123 +186,72 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // Crear ciudades de ejemplo (en lugar de llamar a la API)
-        const cities = [
-            { value: `${searchQuery}, España`, label: `${searchQuery}, España`, lat: 40.416, lon: -3.703 },
-            { value: `${searchQuery}, México`, label: `${searchQuery}, México`, lat: 19.432, lon: -99.133 },
-            { value: `${searchQuery}, Argentina`, label: `${searchQuery}, Argentina`, lat: -34.603, lon: -58.381 },
-            { value: `${searchQuery}, Estados Unidos`, label: `${searchQuery}, Estados Unidos`, lat: 37.090, lon: -95.712 },
-            { value: `${searchQuery}, Brasil`, label: `${searchQuery}, Brasil`, lat: -15.826, lon: -47.921 }
-        ];
+        // Llamar a la API de Geoapify
+        const apiUrl = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(searchQuery)}&limit=5&apiKey=${GEOAPIFY_API_KEY}`;
         
-        displayCityResults(cities, resultsContainer, isTransit ? selectTransitCity : selectNatalCity);
+        fetch(apiUrl)
+            .then(response => response.json())
+            .then(data => {
+                if (data.features && data.features.length > 0) {
+                    const cities = data.features.map(feature => {
+                        const properties = feature.properties;
+                        const label = `${properties.city || properties.name || searchQuery}, ${properties.country}`;
+                        return {
+                            value: label,
+                            label: label,
+                            lat: feature.geometry.coordinates[1],
+                            lon: feature.geometry.coordinates[0]
+                        };
+                    });
+                    displayCityResults(cities, resultsContainer, isTransit ? selectTransitCity : selectNatalCity);
+                } else {
+                    // Si no hay resultados, usar los datos simulados
+                    const cities = [
+                        { value: `${searchQuery}, España`, label: `${searchQuery}, España`, lat: 40.416, lon: -3.703 },
+                        { value: `${searchQuery}, México`, label: `${searchQuery}, México`, lat: 19.432, lon: -99.133 },
+                        { value: `${searchQuery}, Argentina`, label: `${searchQuery}, Argentina`, lat: -34.603, lon: -58.381 },
+                        { value: `${searchQuery}, Estados Unidos`, label: `${searchQuery}, Estados Unidos`, lat: 37.090, lon: -95.712 },
+                        { value: `${searchQuery}, Brasil`, label: `${searchQuery}, Brasil`, lat: -15.826, lon: -47.921 }
+                    ];
+                    displayCityResults(cities, resultsContainer, isTransit ? selectTransitCity : selectNatalCity);
+                }
+            })
+            .catch(error => {
+                console.error('Error en la búsqueda de ciudades:', error);
+                // En caso de error, usar los datos simulados
+                const cities = [
+                    { value: `${searchQuery}, España`, label: `${searchQuery}, España`, lat: 40.416, lon: -3.703 },
+                    { value: `${searchQuery}, México`, label: `${searchQuery}, México`, lat: 19.432, lon: -99.133 },
+                    { value: `${searchQuery}, Argentina`, label: `${searchQuery}, Argentina`, lat: -34.603, lon: -58.381 },
+                    { value: `${searchQuery}, Estados Unidos`, label: `${searchQuery}, Estados Unidos`, lat: 37.090, lon: -95.712 },
+                    { value: `${searchQuery}, Brasil`, label: `${searchQuery}, Brasil`, lat: -15.826, lon: -47.921 }
+                ];
+                displayCityResults(cities, resultsContainer, isTransit ? selectTransitCity : selectNatalCity);
+            });
     }
     
-    // Función para obtener zona horaria a partir de coordenadas usando time_zone.csv local
+    // Función para obtener zona horaria a partir de coordenadas
     async function getTimezone(lat, lon, date) {
         try {
-            // Intentar cargar el archivo CSV de zonas horarias
-            const response = await fetch('time_zone.csv');
-            const csvData = await response.text();
+            // Usar la API de timezone para obtener la zona horaria
+            const apiUrl = `https://api.geoapify.com/v1/timezone?lat=${lat}&lon=${lon}&apiKey=${GEOAPIFY_API_KEY}`;
             
-            // Parsear el CSV
-            const lines = csvData.split('\n');
-            const headers = lines[0].split(',').map(h => h.trim());
+            const response = await fetch(apiUrl);
+            const data = await response.json();
             
-            // Buscando columnas para offset, nombre de zona, etc.
-            const possibleOffsetColumns = headers.filter(h => 
-                h.toLowerCase().includes('offset') || 
-                h.toLowerCase().includes('utc') || 
-                h.toLowerCase().includes('gmt') ||
-                h.match(/^[-+]?\d/)
-            );
-            
-            const possibleNameColumns = headers.filter(h => 
-                h.toLowerCase().includes('zone') || 
-                h.toLowerCase().includes('region') || 
-                h.toLowerCase().includes('name') || 
-                h.toLowerCase().includes('area') ||
-                h.toLowerCase().includes('location')
-            );
-            
-            // Si no encontramos columnas adecuadas, usamos estimación por longitud
-            if (possibleOffsetColumns.length === 0) {
-                console.warn("No se encontraron columnas de offset en el CSV");
+            if (data && data.timezone) {
+                const offset = data.timezone.offset_DST / 3600; // Convertir segundos a horas
+                return {
+                    name: data.timezone.name,
+                    offset: offset,
+                    abbreviation: data.timezone.abbreviation_DST,
+                    source: 'api'
+                };
+            } else {
                 return estimateTimezoneByLongitude(lon);
             }
-            
-            // Estimar la zona horaria basada en la longitud para comparación
-            const estimatedOffset = Math.round(lon / 15);
-            
-            // Buscar la zona horaria más cercana
-            let bestMatch = null;
-            let smallestDifference = Infinity;
-            
-            for (let i = 1; i < lines.length; i++) {
-                if (!lines[i].trim()) continue; // Saltar líneas vacías
-                
-                const columns = lines[i].split(',').map(c => c.trim());
-                if (columns.length < headers.length) continue;
-                
-                // Intentar encontrar el offset en las columnas candidatas
-                let foundOffset = null;
-                for (const colName of possibleOffsetColumns) {
-                    const colIndex = headers.indexOf(colName);
-                    if (colIndex >= 0) {
-                        // Intentar interpretar el valor como número
-                        const rawValue = columns[colIndex];
-                        const numValue = parseFloat(rawValue);
-                        
-                        if (!isNaN(numValue)) {
-                            foundOffset = numValue;
-                            break;
-                        } else if (typeof rawValue === 'string') {
-                            // Intentar extraer número de textos como "GMT+3" o "UTC-5"
-                            const match = rawValue.match(/[+-]?\d+(\.\d+)?/);
-                            if (match) {
-                                foundOffset = parseFloat(match[0]);
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // Si no encontramos offset, saltamos esta línea
-                if (foundOffset === null) continue;
-                
-                // Calcular la diferencia con el offset estimado
-                const difference = Math.abs(estimatedOffset - foundOffset);
-                
-                if (difference < smallestDifference) {
-                    smallestDifference = difference;
-                    
-                    // Intentar obtener el nombre de la zona
-                    let zoneName = "Unknown";
-                    for (const colName of possibleNameColumns) {
-                        const colIndex = headers.indexOf(colName);
-                        if (colIndex >= 0 && columns[colIndex]) {
-                            zoneName = columns[colIndex];
-                            break;
-                        }
-                    }
-                    
-                    bestMatch = {
-                        name: zoneName,
-                        offset: foundOffset,
-                        abbreviation: `GMT${foundOffset >= 0 ? '+' : ''}${foundOffset}`,
-                        source: 'csv'
-                    };
-                }
-            }
-            
-            if (bestMatch) {
-                console.log("Zona horaria encontrada en CSV:", bestMatch);
-                return bestMatch;
-            } else {
-                throw new Error('No se encontró zona horaria adecuada en el CSV');
-            }
         } catch (error) {
-            console.error('Error obteniendo zona horaria desde CSV:', error);
+            console.error('Error obteniendo zona horaria:', error);
             return estimateTimezoneByLongitude(lon);
         }
     }
@@ -595,8 +433,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 transitPlanets = [];
             }
             
+            // Calcular aspectos
+            const internalAspectsData = calculateAspects(natalPlanets);
+            let interChartAspectsData = [];
+            
+            if (showTransitsToggle.checked) {
+                interChartAspectsData = calculateAspects(natalPlanets, transitPlanets);
+            }
+            
             // Renderizar la carta
             renderChart();
+            
+            // Renderizar posiciones y aspectos
+            renderPlanetPositions(internalAspectsData, interChartAspectsData);
             
             // Renderizar coincidencias
             renderCoincidencias();
@@ -614,6 +463,56 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error("Error en los cálculos:", error);
             showError("Ocurrió un error en los cálculos. Por favor intenta de nuevo.");
         }
+    }
+    
+    // Función para calcular aspectos entre planetas
+    function calculateAspects(planets1, planets2 = null) {
+        const aspects = [];
+        
+        // Si solo pasamos un conjunto de planetas, calculamos aspectos internos
+        if (!planets2) {
+            planets2 = planets1;
+        }
+        
+        // Filtramos planetas para incluir solo los tradicionales
+        const validPlanets1 = planets1.filter(p => 
+            ["SOL", "LUNA", "MERCURIO", "VENUS", "MARTE", "JÚPITER", "SATURNO"].includes(p.name)
+        );
+        
+        const validPlanets2 = planets2.filter(p => 
+            ["SOL", "LUNA", "MERCURIO", "VENUS", "MARTE", "JÚPITER", "SATURNO"].includes(p.name)
+        );
+    
+        // Si estamos calculando aspectos entre dos cartas diferentes, usamos todos los planetas
+        // Si estamos calculando aspectos dentro de la misma carta, evitamos duplicados
+        for (let i = 0; i < validPlanets1.length; i++) {
+            const startJ = planets1 === planets2 ? i + 1 : 0;
+            for (let j = startJ; j < validPlanets2.length; j++) {
+                const planet1 = validPlanets1[i];
+                const planet2 = validPlanets2[j];
+                
+                // Evitar comparar un planeta consigo mismo
+                if (planet1 === planet2) continue;
+                
+                let diff = Math.abs(planet1.longitude - planet2.longitude);
+                if (diff > 180) diff = 360 - diff;
+                
+                for (const [aspectType, aspect] of Object.entries(ASPECTS)) {
+                    if (Math.abs(diff - aspect.angle) <= aspect.orb) {
+                        aspects.push({
+                            planet1: planet1.name,
+                            planet2: planet2.name,
+                            type: aspectType,
+                            angle: diff,
+                            color: aspect.color,
+                            isInterChart: planets1 !== planets2
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+        return aspects;
     }
     
     // Función para calcular el ascendente
@@ -866,6 +765,54 @@ document.addEventListener('DOMContentLoaded', function() {
             'stroke-width': 1
         });
         
+        // Calcular y dibujar aspectos
+        const aspectsToDisplay = [
+            ...calculateAspects(natalPlanets),
+            ...(showTransitsToggle.checked ? calculateAspects(natalPlanets, transitPlanets) : [])
+        ];
+        
+        // Dibujar aspectos
+        aspectsToDisplay.forEach((aspect, index) => {
+            // Determinar los planetas y sus posiciones
+            const planet1Source = aspect.isInterChart ? natalPlanets : natalPlanets;
+            const planet2Source = aspect.isInterChart ? transitPlanets : natalPlanets;
+            
+            const planet1 = planet1Source.find(p => p.name === aspect.planet1);
+            const planet2 = planet2Source.find(p => p.name === aspect.planet2);
+            
+            if (!planet1 || !planet2) return;
+            
+            const angle1 = (planet1.longitude - 90) * Math.PI / 180;
+            const angle2 = (planet2.longitude - 90) * Math.PI / 180;
+            
+            // Para aspectos internos, usamos el radio interno
+            // Para aspectos entre cartas, conectamos desde los radios correspondientes
+            const radius1 = aspect.isInterChart ? DIMENSIONS.innerRadius : DIMENSIONS.innerRadius;
+            const radius2 = aspect.isInterChart ? DIMENSIONS.middleRadius : DIMENSIONS.innerRadius;
+            
+            const x1 = DIMENSIONS.centerX + radius1 * Math.cos(angle1);
+            const y1 = DIMENSIONS.centerY + radius1 * Math.sin(angle1);
+            const x2 = DIMENSIONS.centerX + radius2 * Math.cos(angle2);
+            const y2 = DIMENSIONS.centerY + radius2 * Math.sin(angle2);
+            
+            const line = appendSVG('line', {
+                x1: x1,
+                y1: y1,
+                x2: x2,
+                y2: y2,
+                stroke: aspect.color,
+                'stroke-width': 1,
+                'stroke-dasharray': aspect.isInterChart ? '3,3' : 'none',
+                class: 'aspect-line',
+                'data-aspect-index': index
+            });
+            
+            // Añadir evento click
+            line.addEventListener('click', () => {
+                selectAspect(aspect);
+            });
+        });
+        
         // Dibujar planetas natales
         natalPlanets.forEach(planet => {
             const angle = ((planet.longitude - 90) * Math.PI) / 180;
@@ -873,14 +820,16 @@ document.addEventListener('DOMContentLoaded', function() {
             const y = DIMENSIONS.centerY + (DIMENSIONS.innerRadius - 20) * Math.sin(angle);
             
             // Círculo del planeta
-            appendSVG('circle', {
+            const circle = appendSVG('circle', {
                 cx: x,
                 cy: y,
                 r: 5,
                 fill: getPlanetColor(planet.name, planet.longitude),
                 stroke: '#000',
                 'stroke-width': 1,
-                class: 'planet planet-natal'
+                class: 'planet planet-natal',
+                'data-planet': planet.name,
+                'data-is-natal': 'true'
             });
             
             // Símbolo del planeta
@@ -891,8 +840,19 @@ document.addEventListener('DOMContentLoaded', function() {
             text.setAttribute('alignment-baseline', 'middle');
             text.setAttribute('font-size', '16');
             text.setAttribute('class', 'planet-symbol');
+            text.setAttribute('data-planet', planet.name);
+            text.setAttribute('data-is-natal', 'true');
             text.textContent = PLANET_SYMBOLS[planet.name];
             chartSvg.appendChild(text);
+            
+            // Añadir eventos
+            circle.addEventListener('click', () => {
+                selectPlanet(planet.name, true);
+            });
+            
+            text.addEventListener('click', () => {
+                selectPlanet(planet.name, true);
+            });
         });
         
         // Dibujar planetas de tránsito si están habilitados
@@ -903,14 +863,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 const y = DIMENSIONS.centerY + (DIMENSIONS.middleRadius + 20) * Math.sin(angle);
                 
                 // Círculo del planeta
-                appendSVG('circle', {
+                const circle = appendSVG('circle', {
                     cx: x,
                     cy: y,
                     r: 5,
                     fill: getPlanetColor(planet.name, planet.longitude),
                     stroke: '#000',
                     'stroke-width': 1,
-                    class: 'planet planet-transit'
+                    class: 'planet planet-transit',
+                    'data-planet': planet.name,
+                    'data-is-natal': 'false'
                 });
                 
                 // Símbolo del planeta
@@ -921,29 +883,118 @@ document.addEventListener('DOMContentLoaded', function() {
                 text.setAttribute('alignment-baseline', 'middle');
                 text.setAttribute('font-size', '16');
                 text.setAttribute('class', 'planet-symbol');
+                text.setAttribute('data-planet', planet.name);
+                text.setAttribute('data-is-natal', 'false');
                 text.textContent = PLANET_SYMBOLS[planet.name];
                 chartSvg.appendChild(text);
+                
+                // Añadir eventos
+                circle.addEventListener('click', () => {
+                    selectPlanet(planet.name, false);
+                });
+                
+                text.addEventListener('click', () => {
+                    selectPlanet(planet.name, false);
+                });
+            });
+        }
+    }
+    
+    // Función para seleccionar planeta
+    function selectPlanet(planetName, isNatal) {
+        // Deseleccionar todos los planetas y aspectos
+        document.querySelectorAll('.planet, .planet-symbol').forEach(el => {
+            el.classList.remove('selected');
+        });
+        
+        document.querySelectorAll('.aspect-line').forEach(el => {
+            el.classList.remove('selected');
+        });
+        
+        // Seleccionar el planeta
+        document.querySelectorAll(`.planet[data-planet="${planetName}"][data-is-natal="${isNatal}"], .planet-symbol[data-planet="${planetName}"][data-is-natal="${isNatal}"]`).forEach(el => {
+            el.classList.add('selected');
+        });
+        
+        // Actualizar las listas de posiciones
+        document.querySelectorAll('.position-item').forEach(el => {
+            el.classList.remove('bg-blue-100');
+            if (el.getAttribute('data-planet') === planetName && el.getAttribute('data-is-natal') === String(isNatal)) {
+                el.classList.add('bg-blue-100');
+            }
+        });
+        
+        // Desseleccionar aspectos
+        document.querySelectorAll('.aspect-item').forEach(el => {
+            el.classList.remove('bg-blue-100');
+        });
+    }
+    
+    // Función para seleccionar aspecto
+    function selectAspect(aspect) {
+        // Deseleccionar todos los planetas y aspectos
+        document.querySelectorAll('.planet, .planet-symbol').forEach(el => {
+            el.classList.remove('selected');
+        });
+        
+        document.querySelectorAll('.aspect-line').forEach(el => {
+            el.classList.remove('selected');
+        });
+        
+        // Seleccionar los planetas del aspecto
+        document.querySelectorAll(`.planet[data-planet="${aspect.planet1}"][data-is-natal="true"]`).forEach(el => {
+            el.classList.add('selected');
+        });
+        
+        if (aspect.isInterChart) {
+            document.querySelectorAll(`.planet[data-planet="${aspect.planet2}"][data-is-natal="false"]`).forEach(el => {
+                el.classList.add('selected');
+            });
+        } else {
+            document.querySelectorAll(`.planet[data-planet="${aspect.planet2}"][data-is-natal="true"]`).forEach(el => {
+                el.classList.add('selected');
             });
         }
         
-        // Renderizar posiciones de planetas
-        renderPlanetPositions();
+        // Actualizar las listas de aspectos
+        document.querySelectorAll('.aspect-item').forEach(el => {
+            el.classList.remove('bg-blue-100');
+            const aspectPlanet1 = el.getAttribute('data-planet1');
+            const aspectPlanet2 = el.getAttribute('data-planet2');
+            const aspectType = el.getAttribute('data-aspect-type');
+            const isInterChart = el.getAttribute('data-is-interchart') === 'true';
+            
+            if (aspectPlanet1 === aspect.planet1 && aspectPlanet2 === aspect.planet2 && 
+                aspectType === aspect.type && isInterChart === aspect.isInterChart) {
+                el.classList.add('bg-blue-100');
+            }
+        });
+        
+        // Deseleccionar posiciones
+        document.querySelectorAll('.position-item').forEach(el => {
+            el.classList.remove('bg-blue-100');
+        });
     }
     
-    // Función para renderizar las posiciones de los planetas
-    function renderPlanetPositions() {
+    // Función para renderizar las posiciones de los planetas y aspectos
+    function renderPlanetPositions(internalAspectsData, interChartAspectsData) {
         // Limpiar contenedores
         natalPositions.innerHTML = '';
         transitPositions.innerHTML = '';
+        internalAspects.innerHTML = '';
+        interChartAspects.innerHTML = '';
         
         // Posiciones natales
         natalPlanets.forEach(planet => {
             const div = document.createElement('div');
-            div.className = 'p-2 rounded hover:bg-gray-100 cursor-pointer';
+            div.className = 'p-2 rounded hover:bg-gray-100 cursor-pointer position-item';
+            div.setAttribute('data-planet', planet.name);
+            div.setAttribute('data-is-natal', 'true');
             div.innerHTML = `
                 <span class="font-bold mr-2">${PLANET_SYMBOLS[planet.name]}</span>
                 ${planet.name}: ${planet.longitude.toFixed(2)}° ${planet.sign}
             `;
+            div.addEventListener('click', () => selectPlanet(planet.name, true));
             natalPositions.appendChild(div);
         });
         
@@ -951,12 +1002,47 @@ document.addEventListener('DOMContentLoaded', function() {
         if (showTransitsToggle.checked && transitPlanets.length > 0) {
             transitPlanets.forEach(planet => {
                 const div = document.createElement('div');
-                div.className = 'p-2 rounded hover:bg-gray-100 cursor-pointer';
+                div.className = 'p-2 rounded hover:bg-gray-100 cursor-pointer position-item';
+                div.setAttribute('data-planet', planet.name);
+                div.setAttribute('data-is-natal', 'false');
                 div.innerHTML = `
                     <span class="font-bold mr-2">${PLANET_SYMBOLS[planet.name]}</span>
                     ${planet.name}: ${planet.longitude.toFixed(2)}° ${planet.sign}
                 `;
+                div.addEventListener('click', () => selectPlanet(planet.name, false));
                 transitPositions.appendChild(div);
+            });
+        }
+        
+        // Aspectos internos
+        internalAspectsData.forEach((aspect, index) => {
+            const div = document.createElement('div');
+            div.className = 'p-2 rounded hover:bg-gray-100 cursor-pointer aspect-item';
+            div.setAttribute('data-planet1', aspect.planet1);
+            div.setAttribute('data-planet2', aspect.planet2);
+            div.setAttribute('data-aspect-type', aspect.type);
+            div.setAttribute('data-is-interchart', 'false');
+            div.innerHTML = `
+                ${PLANET_SYMBOLS[aspect.planet1]} ${ASPECTS[aspect.type].name} ${PLANET_SYMBOLS[aspect.planet2]} (${aspect.angle.toFixed(2)}°)
+            `;
+            div.addEventListener('click', () => selectAspect(aspect));
+            internalAspects.appendChild(div);
+        });
+        
+        // Aspectos entre cartas
+        if (showTransitsToggle.checked) {
+            interChartAspectsData.forEach((aspect, index) => {
+                const div = document.createElement('div');
+                div.className = 'p-2 rounded hover:bg-gray-100 cursor-pointer aspect-item';
+                div.setAttribute('data-planet1', aspect.planet1);
+                div.setAttribute('data-planet2', aspect.planet2);
+                div.setAttribute('data-aspect-type', aspect.type);
+                div.setAttribute('data-is-interchart', 'true');
+                div.innerHTML = `
+                    <span class="text-blue-800">${PLANET_SYMBOLS[aspect.planet1]}</span> ${ASPECTS[aspect.type].name} <span class="text-red-800">${PLANET_SYMBOLS[aspect.planet2]}</span> (${aspect.angle.toFixed(2)}°)
+                `;
+                div.addEventListener('click', () => selectAspect(aspect));
+                interChartAspects.appendChild(div);
             });
         }
     }
@@ -1212,269 +1298,382 @@ document.addEventListener('DOMContentLoaded', function() {
         return [...orden.slice(idx), ...orden.slice(0, idx)];
     }
     
-    // Función para calcular periodos de relevos zodiacales (hasta 84 años)
-    function calcularRelevodPeriods(fechaNac, ascendente) {
-        const secuencia = generarSecuencia(ascendente);
-        let diaActual = 0;
-        const periodos = [];
-        const maxDays = 84 * 365; // 84 años aproximadamente
-        
-        // Calculamos ciclos completos hasta llegar al máximo de días
-        while (diaActual < maxDays) {
-            for (let i = 0; i < secuencia.length; i++) {
-                const signo = secuencia[i];
-                const diasEnPeriodo = DURACION_POR_NIVEL[signo] * DURACIONES.AÑO;
-                
-                if (diaActual + diasEnPeriodo > maxDays) {
-                    // Recortamos el último período para no exceder el máximo
-                    const diasRestantes = maxDays - diaActual;
-                    if (diasRestantes > 0) {
-                        const fechaInicio = new Date(fechaNac);
-                        fechaInicio.setDate(fechaNac.getDate() + diaActual);
-                        
-                        const fechaFin = new Date(fechaNac);
-                        fechaFin.setDate(fechaNac.getDate() + maxDays);
-                        
-                        const periodo = {
-                            signo: signo,
-                            level: 1,
-                            planeta: SIGNOS[signo].planeta,
-                            start: fechaInicio,
-                            end: fechaFin,
-                            startDay: diaActual,
-                            durationDays: diasRestantes
-                        };
-                        
-                        // Calcular subperiodos para este período recortado
-                        periodo.subPeriods = calcularRelevodSubperiodos(
-                            fechaNac,
-                            diaActual,
-                            diasRestantes,
-                            secuencia,
-                            i,
-                            2
-                        );
-                        
-                        periodos.push(periodo);
-                    }
-                    break;
-                }
-                
-                const fechaInicio = new Date(fechaNac);
-                fechaInicio.setDate(fechaNac.getDate() + diaActual);
-                
-                const fechaFin = new Date(fechaNac);
-                fechaFin.setDate(fechaNac.getDate() + diaActual + diasEnPeriodo);
-                
-                const periodo = {
-                    signo: signo,
-                    level: 1,
-                    planeta: SIGNOS[signo].planeta,
-                    start: fechaInicio,
-                    end: fechaFin,
-                    startDay: diaActual,
-                    durationDays: diasEnPeriodo
-                };
-                
-                // Calcular subperiodos
-                periodo.subPeriods = calcularRelevodSubperiodos(
-                    fechaNac,
-                    diaActual,
-                    diasEnPeriodo,
-                    secuencia,
-                    i,
-                    2
-                );
-                
-                periodos.push(periodo);
-                diaActual += diasEnPeriodo;
-                
-                if (diaActual >= maxDays) break;
-            }
-        }
-        
-        return periodos;
-    }
+// Función para calcular periodos de relevos zodiacales (hasta 84 años)
+function calcularRelevodPeriods(fechaNac, ascendente) {
+    const secuencia = generarSecuencia(ascendente);
+    let diaActual = 0;
+    const periodos = [];
+    const maxDays = 84 * 365; // 84 años aproximadamente
     
-    // Función para calcular subperiodos de relevos zodiacales
-    function calcularRelevodSubperiodos(fechaNac, diaInicio, duracionTotal, secuencia, idxInicial, nivel) {
-        if (nivel > 4) return [];
-        
-        const periodos = [];
-        let diaActual = 0;
-        const unidadTiempo = nivel === 2 ? 'meses' : nivel === 3 ? 'semanas' : 'dias';
-        const duracionUnidad = nivel === 2 ? DURACIONES.MES : nivel === 3 ? DURACIONES.SEMANA : DURACIONES.DIA;
-        
-        while (diaActual < duracionTotal) {
-            for (let i = 0; i < secuencia.length && diaActual < duracionTotal; i++) {
-                const signo = secuencia[(idxInicial + i) % secuencia.length];
-                const duracionPeriodo = DURACION_POR_NIVEL[signo] * duracionUnidad;
-                const duracionReal = Math.min(duracionPeriodo, duracionTotal - diaActual);
-                
-                if (duracionReal > 0) {
+    // Calculamos ciclos completos hasta llegar al máximo de días
+    while (diaActual < maxDays) {
+        for (let i = 0; i < secuencia.length; i++) {
+            const signo = secuencia[i];
+            const diasEnPeriodo = DURACION_POR_NIVEL[signo] * DURACIONES.AÑO;
+            
+            if (diaActual + diasEnPeriodo > maxDays) {
+                // Recortamos el último período para no exceder el máximo
+                const diasRestantes = maxDays - diaActual;
+                if (diasRestantes > 0) {
                     const fechaInicio = new Date(fechaNac);
-                    fechaInicio.setDate(fechaNac.getDate() + diaInicio + diaActual);
+                    fechaInicio.setDate(fechaNac.getDate() + diaActual);
                     
                     const fechaFin = new Date(fechaNac);
-                    fechaFin.setDate(fechaNac.getDate() + diaInicio + diaActual + duracionReal);
+                    fechaFin.setDate(fechaNac.getDate() + maxDays);
                     
                     const periodo = {
                         signo: signo,
-                        level: nivel,
+                        level: 1,
                         planeta: SIGNOS[signo].planeta,
                         start: fechaInicio,
                         end: fechaFin,
-                        startDay: diaInicio + diaActual,
-                        durationDays: duracionReal
+                        startDay: diaActual,
+                        durationDays: diasRestantes
                     };
                     
-                    if (nivel < 4) {
-                        periodo.subPeriods = calcularRelevodSubperiodos(
-                            fechaNac,
-                            diaInicio + diaActual,
-                            duracionReal,
-                            secuencia,
-                            (idxInicial + i) % secuencia.length,
-                            nivel + 1
-                        );
-                    }
+                    // Calcular subperiodos para este período recortado
+                    periodo.subPeriods = calcularRelevodSubperiodos(
+                        fechaNac,
+                        diaActual,
+                        diasRestantes,
+                        secuencia,
+                        i,
+                        2
+                    );
                     
                     periodos.push(periodo);
-                    diaActual += duracionReal;
                 }
+                break;
             }
-        }
-        
-        return periodos;
-    }
-    
-    // Función para buscar coincidencias entre Fardarias y Relevos
-    function buscarCoincidencias(periodosFardaria, periodosRelevo) {
-        const coincidencias = [];
-        
-        // Extraer todos los periodos de nivel 4 (días) de Fardarias
-        const diasFardaria = extraerPeriodosNivel(periodosFardaria, 4);
-        
-        // Extraer todos los periodos de nivel 4 (días) de Relevos
-        const diasRelevo = extraerPeriodosNivel(periodosRelevo, 4);
-        
-        console.log(`Períodos Fardaria nivel 4: ${diasFardaria.length}`);
-        console.log(`Períodos Relevo nivel 4: ${diasRelevo.length}`);
-        
-        // Buscar coincidencias de planetas y fechas superpuestas
-        diasFardaria.forEach(fardaria => {
-            diasRelevo.forEach(relevo => {
-                if (fardaria.planet === relevo.planeta) {
-                    // Verificar si las fechas se superponen
-                    const fardiaStart = new Date(fardaria.start);
-                    const fardiaEnd = new Date(fardaria.end);
-                    const relevoStart = new Date(relevo.start);
-                    const relevoEnd = new Date(relevo.end);
-                    
-                    if (fardiaStart <= relevoEnd && fardiaEnd >= relevoStart) {
-                        // Calcular el período de superposición
-                        const overlapStart = new Date(Math.max(fardiaStart.getTime(), relevoStart.getTime()));
-                        const overlapEnd = new Date(Math.min(fardiaEnd.getTime(), relevoEnd.getTime()));
-                        
-                        coincidencias.push({
-                            planeta: fardaria.planet,
-                            signo: relevo.signo,
-                            fardariaPeriodo: {
-                                start: fardaria.start,
-                                end: fardaria.end
-                            },
-                            relevoPeriodo: {
-                                start: relevo.start,
-                                end: relevo.end,
-                                signo: relevo.signo
-                            },
-                            overlap: {
-                                start: overlapStart,
-                                end: overlapEnd,
-                                year: overlapStart.getFullYear()
-                            }
-                        });
-                    }
-                }
-            });
-        });
-        
-        // Ordenar por año y fecha de inicio
-        coincidencias.sort((a, b) => {
-            if (a.overlap.year !== b.overlap.year) {
-                return a.overlap.year - b.overlap.year;
-            }
-            return a.overlap.start - b.overlap.start;
-        });
-        
-        console.log(`Total de coincidencias encontradas: ${coincidencias.length}`);
-        
-        return coincidencias;
-    }
-    
-    // Función auxiliar para extraer periodos específicamente de nivel 4
-    function extraerPeriodosNivel(periodos, nivel) {
-        let resultado = [];
-        
-        function recorrerPeriodos(periodo) {
-            if (periodo.level === nivel) {
-                resultado.push(periodo);
-            } else if (periodo.subPeriods && periodo.subPeriods.length > 0) {
-                periodo.subPeriods.forEach(recorrerPeriodos);
-            }
-        }
-        
-        periodos.forEach(recorrerPeriodos);
-        return resultado;
-    }
-    
-    // Determinar si un nacimiento es seco o húmedo
-    function isDryBirth(sunLongitude, ascLongitude) {
-        // Es seco cuando el Sol está entre las casas 6 y 11 (inclusive)
-        const diff = (sunLongitude - ascLongitude) % 360;
-        const house = Math.floor(diff / 30) + 1;
-        
-        // Es seco si el Sol está en las casas 6 a 11
-        return 6 <= house && house <= 11;
-    }
-    
-    // Simulación de posiciones planetarias
-    function mockCalculatePositions(isNatal, ascSign = null, ascLongitude = null) {
-        const basePositions = [
-            { name: "SOL", longitude: isNatal ? 120 : 150, sign: isNatal ? "LEO" : "VIRGO" },
-            { name: "LUNA", longitude: isNatal ? 186 : 210, sign: isNatal ? "LIBRA" : "ESCORPIO" },
-            { name: "MERCURIO", longitude: isNatal ? 135 : 145, sign: isNatal ? "LEO" : "VIRGO" },
-            { name: "VENUS", longitude: isNatal ? 90 : 100, sign: isNatal ? "CÁNCER" : "CÁNCER" },
-            { name: "MARTE", longitude: isNatal ? 210 : 240, sign: isNatal ? "ESCORPIO" : "SAGITARIO" },
-            { name: "JÚPITER", longitude: isNatal ? 270 : 290, sign: isNatal ? "CAPRICORNIO" : "CAPRICORNIO" },
-            { name: "SATURNO", longitude: isNatal ? 330 : 350, sign: isNatal ? "PISCIS" : "PISCIS" },
-            { name: "URANO", longitude: isNatal ? 30 : 32, sign: isNatal ? "TAURO" : "TAURO" },
-            { name: "NEPTUNO", longitude: isNatal ? 354 : 355, sign: isNatal ? "ARIES" : "ARIES" },
-            { name: "PLUTÓN", longitude: isNatal ? 252 : 254, sign: isNatal ? "SAGITARIO" : "SAGITARIO" }
-        ];
-        
-        // Si tenemos un ascendente calculado, usarlo para la carta natal
-        if (ascSign && ascLongitude !== null) {
-            // Añadir el ascendente calculado
-            basePositions.push({ name: "ASC", longitude: ascLongitude, sign: ascSign });
             
-            // Añadir el MC (aproximadamente a 90° del Ascendente)
-            const mcLongitude = (ascLongitude + 90) % 360;
-            const mcSign = getSignFromLongitude(mcLongitude);
-            basePositions.push({ name: "MC", longitude: mcLongitude, sign: mcSign });
-        } else {
-            // Usar valores por defecto
-            basePositions.push({ name: "ASC", longitude: isNatal ? 0 : 10, sign: isNatal ? "ARIES" : "ARIES" });
-            basePositions.push({ name: "MC", longitude: isNatal ? 270 : 280, sign: isNatal ? "CAPRICORNIO" : "CAPRICORNIO" });
+            const fechaInicio = new Date(fechaNac);
+            fechaInicio.setDate(fechaNac.getDate() + diaActual);
+            
+            const fechaFin = new Date(fechaNac);
+            fechaFin.setDate(fechaNac.getDate() + diaActual + diasEnPeriodo);
+            
+            const periodo = {
+                signo: signo,
+                level: 1,
+                planeta: SIGNOS[signo].planeta,
+                start: fechaInicio,
+                end: fechaFin,
+                startDay: diaActual,
+                durationDays: diasEnPeriodo
+            };
+            
+            // Calcular subperiodos
+            periodo.subPeriods = calcularRelevodSubperiodos(
+                fechaNac,
+                diaActual,
+                diasEnPeriodo,
+                secuencia,
+                i,
+                2
+            );
+            
+            periodos.push(periodo);
+            diaActual += diasEnPeriodo;
+            
+            if (diaActual >= maxDays) break;
         }
-        
-        // Añadir variación a las posiciones para la segunda carta
-        if (!isNatal) {
-            return basePositions.map(planet => ({
-                ...planet,
-                longitude: (planet.longitude + Math.random() * 20 - 10) % 360
-            }));
-        }
-        
-        return basePositions;
     }
+    
+    return periodos;
+}
+
+// Función para calcular subperiodos de relevos zodiacales
+function calcularRelevodSubperiodos(fechaNac, diaInicio, duracionTotal, secuencia, idxInicial, nivel) {
+    if (nivel > 4) return [];
+    
+    const periodos = [];
+    let diaActual = 0;
+    const unidadTiempo = nivel === 2 ? 'meses' : nivel === 3 ? 'semanas' : 'dias';
+    const duracionUnidad = nivel === 2 ? DURACIONES.MES : nivel === 3 ? DURACIONES.SEMANA : DURACIONES.DIA;
+    
+    while (diaActual < duracionTotal) {
+        for (let i = 0; i < secuencia.length && diaActual < duracionTotal; i++) {
+            const signo = secuencia[(idxInicial + i) % secuencia.length];
+            const duracionPeriodo = DURACION_POR_NIVEL[signo] * duracionUnidad;
+            const duracionReal = Math.min(duracionPeriodo, duracionTotal - diaActual);
+            
+            if (duracionReal > 0) {
+                const fechaInicio = new Date(fechaNac);
+                fechaInicio.setDate(fechaNac.getDate() + diaInicio + diaActual);
+                
+                const fechaFin = new Date(fechaNac);
+                fechaFin.setDate(fechaNac.getDate() + diaInicio + diaActual + duracionReal);
+                
+                const periodo = {
+                    signo: signo,
+                    level: nivel,
+                    planeta: SIGNOS[signo].planeta,
+                    start: fechaInicio,
+                    end: fechaFin,
+                    startDay: diaInicio + diaActual,
+                    durationDays: duracionReal
+                };
+                
+                if (nivel < 4) {
+                    periodo.subPeriods = calcularRelevodSubperiodos(
+                        fechaNac,
+                        diaInicio + diaActual,
+                        duracionReal,
+                        secuencia,
+                        (idxInicial + i) % secuencia.length,
+                        nivel + 1
+                    );
+                }
+                
+                periodos.push(periodo);
+                diaActual += duracionReal;
+            }
+        }
+    }
+    
+    return periodos;
+}
+
+// Función para buscar coincidencias entre Fardarias y Relevos
+function buscarCoincidencias(periodosFardaria, periodosRelevo) {
+    const coincidencias = [];
+    
+    // Extraer todos los periodos de nivel 4 (días) de Fardarias
+    const diasFardaria = extraerPeriodosNivel(periodosFardaria, 4);
+    
+    // Extraer todos los periodos de nivel 4 (días) de Relevos
+    const diasRelevo = extraerPeriodosNivel(periodosRelevo, 4);
+    
+    console.log(`Períodos Fardaria nivel 4: ${diasFardaria.length}`);
+    console.log(`Períodos Relevo nivel 4: ${diasRelevo.length}`);
+    
+    // Buscar coincidencias de planetas y fechas superpuestas
+    diasFardaria.forEach(fardaria => {
+        diasRelevo.forEach(relevo => {
+            if (fardaria.planet === relevo.planeta) {
+                // Verificar si las fechas se superponen
+                const fardiaStart = new Date(fardaria.start);
+                const fardiaEnd = new Date(fardaria.end);
+                const relevoStart = new Date(relevo.start);
+                const relevoEnd = new Date(relevo.end);
+                
+                if (fardiaStart <= relevoEnd && fardiaEnd >= relevoStart) {
+                    // Calcular el período de superposición
+                    const overlapStart = new Date(Math.max(fardiaStart.getTime(), relevoStart.getTime()));
+                    const overlapEnd = new Date(Math.min(fardiaEnd.getTime(), relevoEnd.getTime()));
+                    
+                    coincidencias.push({
+                        planeta: fardaria.planet,
+                        signo: relevo.signo,
+                        fardariaPeriodo: {
+                            start: fardaria.start,
+                            end: fardaria.end
+                        },
+                        relevoPeriodo: {
+                            start: relevo.start,
+                            end: relevo.end,
+                            signo: relevo.signo
+                        },
+                        overlap: {
+                            start: overlapStart,
+                            end: overlapEnd,
+                            year: overlapStart.getFullYear()
+                        }
+                    });
+                }
+            }
+        });
+    });
+    
+    // Ordenar por año y fecha de inicio
+    coincidencias.sort((a, b) => {
+        if (a.overlap.year !== b.overlap.year) {
+            return a.overlap.year - b.overlap.year;
+        }
+        return a.overlap.start - b.overlap.start;
+    });
+    
+    console.log(`Total de coincidencias encontradas: ${coincidencias.length}`);
+    
+    return coincidencias;
+}
+
+// Función auxiliar para extraer periodos específicamente de nivel 4
+function extraerPeriodosNivel(periodos, nivel) {
+    let resultado = [];
+    
+    function recorrerPeriodos(periodo) {
+        if (periodo.level === nivel) {
+            resultado.push(periodo);
+        } else if (periodo.subPeriods && periodo.subPeriods.length > 0) {
+            periodo.subPeriods.forEach(recorrerPeriodos);
+        }
+    }
+    
+    periodos.forEach(recorrerPeriodos);
+    return resultado;
+}
+
+// Determinar si un nacimiento es seco o húmedo
+function isDryBirth(sunLongitude, ascLongitude) {
+    // Es seco cuando el Sol está entre las casas 6 y 11 (inclusive)
+    const diff = (sunLongitude - ascLongitude) % 360;
+    const house = Math.floor(diff / 30) + 1;
+    
+    // Es seco si el Sol está en las casas 6 a 11
+    return 6 <= house && house <= 11;
+}
+
+// Simulación de posiciones planetarias
+function mockCalculatePositions(isNatal, ascSign = null, ascLongitude = null) {
+    const basePositions = [
+        { name: "SOL", longitude: isNatal ? 120 : 150, sign: isNatal ? "LEO" : "VIRGO" },
+        { name: "LUNA", longitude: isNatal ? 186 : 210, sign: isNatal ? "LIBRA" : "ESCORPIO" },
+        { name: "MERCURIO", longitude: isNatal ? 135 : 145, sign: isNatal ? "LEO" : "VIRGO" },
+        { name: "VENUS", longitude: isNatal ? 90 : 100, sign: isNatal ? "CÁNCER" : "CÁNCER" },
+        { name: "MARTE", longitude: isNatal ? 210 : 240, sign: isNatal ? "ESCORPIO" : "SAGITARIO" },
+        { name: "JÚPITER", longitude: isNatal ? 270 : 290, sign: isNatal ? "CAPRICORNIO" : "CAPRICORNIO" },
+        { name: "SATURNO", longitude: isNatal ? 330 : 350, sign: isNatal ? "PISCIS" : "PISCIS" },
+        { name: "URANO", longitude: isNatal ? 30 : 32, sign: isNatal ? "TAURO" : "TAURO" },
+        { name: "NEPTUNO", longitude: isNatal ? 354 : 355, sign: isNatal ? "ARIES" : "ARIES" },
+        { name: "PLUTÓN", longitude: isNatal ? 252 : 254, sign: isNatal ? "SAGITARIO" : "SAGITARIO" }
+    ];
+    
+    // Si tenemos un ascendente calculado, usarlo para la carta natal
+    if (ascSign && ascLongitude !== null) {
+        // Añadir el ascendente calculado
+        basePositions.push({ name: "ASC", longitude: ascLongitude, sign: ascSign });
+        
+        // Añadir el MC (aproximadamente a 90° del Ascendente)
+        const mcLongitude = (ascLongitude + 90) % 360;
+        const mcSign = getSignFromLongitude(mcLongitude);
+        basePositions.push({ name: "MC", longitude: mcLongitude, sign: mcSign });
+    } else {
+        // Usar valores por defecto
+        basePositions.push({ name: "ASC", longitude: isNatal ? 0 : 10, sign: isNatal ? "ARIES" : "ARIES" });
+        basePositions.push({ name: "MC", longitude: isNatal ? 270 : 280, sign: isNatal ? "CAPRICORNIO" : "CAPRICORNIO" });
+    }
+    
+    // Añadir variación a las posiciones para la segunda carta
+    if (!isNatal) {
+        return basePositions.map(planet => ({
+            ...planet,
+            longitude: (planet.longitude + Math.random() * 20 - 10) % 360
+        }));
+    }
+    
+    return basePositions;
+}
+
+// Obtener color para un planeta según su posición
+function getPlanetColor(planet, longitude) {
+    if (planet === 'ASC' || planet === 'MC' || planet === 'DSC' || planet === 'IC') return '#000000';
+    
+    if (planet === 'JÚPITER') {
+        if ((longitude >= 306.00 && longitude <= 360.00) || (longitude >= 0.00 && longitude <= 150.00)) 
+            return COLORS.BLUE;
+        if (longitude > 150.00 && longitude < 306.00) 
+            return COLORS.RED;
+    }
+    
+    if (planet === 'SATURNO') {
+        if ((longitude >= 330.00 && longitude <= 360.00) || (longitude >= 0.00 && longitude <= 150.00))
+            return COLORS.YELLOW;
+        if (longitude > 240.00 && longitude <= 252.00) return COLORS.YELLOW;
+        if (longitude > 252.00 && longitude <= 330.00) return COLORS.RED;
+        if (longitude > 150.00 && longitude <= 240.00) return COLORS.RED;
+        return COLORS.YELLOW;
+    }
+    
+    if (longitude > 150.00 && longitude <= 330.00) {
+        switch(planet) {
+            case 'SOL': case 'MERCURIO': case 'URANO': return COLORS.GREEN;
+            case 'VENUS': case 'LUNA': return COLORS.YELLOW;
+            case 'MARTE': case 'PLUTÓN': return COLORS.BLUE;
+            case 'NEPTUNO': return COLORS.RED;
+            default: return '#000000';
+        }
+    } else {
+        switch(planet) {
+            case 'SOL': case 'MARTE': case 'PLUTÓN': return COLORS.RED;
+            case 'VENUS': return COLORS.GREEN;
+            case 'MERCURIO': case 'URANO': return COLORS.YELLOW;
+            case 'LUNA': case 'NEPTUNO': return COLORS.BLUE;
+            default: return '#000000';
+        }
+    }
+}
+
+// Función para crear path SVG de arco
+function createArcPath(startAngle, endAngle) {
+    const start = ((startAngle - 90) * Math.PI) / 180;
+    const end = ((endAngle - 90) * Math.PI) / 180;
+    
+    const x1 = DIMENSIONS.centerX + DIMENSIONS.radius * Math.cos(start);
+    const y1 = DIMENSIONS.centerY + DIMENSIONS.radius * Math.sin(start);
+    const x2 = DIMENSIONS.centerX + DIMENSIONS.radius * Math.cos(end);
+    const y2 = DIMENSIONS.centerY + DIMENSIONS.radius * Math.sin(end);
+    
+    const x1Inner = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(start);
+    const y1Inner = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(start);
+    const x2Inner = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(end);
+    const y2Inner = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(end);
+    
+    const largeArcFlag = end - start <= Math.PI ? "0" : "1";
+    
+    return `M ${x1} ${y1} A ${DIMENSIONS.radius} ${DIMENSIONS.radius} 0 ${largeArcFlag} 1 ${x2} ${y2} L ${x2Inner} ${y2Inner} A ${DIMENSIONS.innerRadius} ${DIMENSIONS.innerRadius} 0 ${largeArcFlag} 0 ${x1Inner} ${y1Inner} Z`;
+}
+
+// Función para mostrar un mensaje de error
+function showError(message, isError = true) {
+    errorMsg.textContent = message;
+    errorMsg.classList.remove('hidden');
+    
+    if (isError) {
+        errorMsg.classList.add('text-red-500');
+        errorMsg.classList.remove('text-blue-500');
+    } else {
+        errorMsg.classList.add('text-blue-500');
+        errorMsg.classList.remove('text-red-500');
+    }
+}
+
+// Función para limpiar mensaje de error
+function clearError() {
+    errorMsg.textContent = '';
+    errorMsg.classList.add('hidden');
+}
+
+// Función para crear elementos SVG
+function appendSVG(tag, attributes) {
+    const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [key, value] of Object.entries(attributes)) {
+        element.setAttribute(key, value);
+    }
+    chartSvg.appendChild(element);
+    return element;
+}
+
+// Función para formatear fecha
+function formatDate(date) {
+    if (!(date instanceof Date)) return '';
+    
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    
+    return `${day}/${month}/${year}`;
+}
+
+// Función de debounce para evitar demasiadas llamadas a la API
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        const context = this;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(context, args), wait);
+    };
+}
+
+// Iniciar la aplicación
+init();
