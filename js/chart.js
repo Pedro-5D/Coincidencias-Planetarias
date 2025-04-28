@@ -1281,5 +1281,43 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Función para limpiar mensaje de error
+// Función para limpiar mensaje de error
     function clearError() {
+        errorMsg.textContent = '';
+        errorMsg.classList.add('hidden');
+    }
+    
+    // Función para crear elementos SVG
+    function appendSVG(tag, attributes) {
+        const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+        for (const [key, value] of Object.entries(attributes)) {
+            element.setAttribute(key, value);
+        }
+        chartSvg.appendChild(element);
+        return element;
+    }
+    
+    // Función para formatear fecha
+    function formatDate(date) {
+        if (!(date instanceof Date)) return '';
+        
+        const day = date.getDate().toString().padStart(2, '0');
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const year = date.getFullYear();
+        
+        return `${day}/${month}/${year}`;
+    }
+    
+    // Función de debounce para evitar demasiadas llamadas a la API
+    function debounce(func, wait) {
+        let timeout;
+        return function(...args) {
+            const context = this;
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(context, args), wait);
+        };
+    }
+    
+    // Iniciar la aplicación
+    init();
+});
