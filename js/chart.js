@@ -225,36 +225,127 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Función para obtener zona horaria a partir de coordenadas
+    // Función para obtener zona horaria a partir de coordenadas usando time_zone.csv local
     async function getTimezone(lat, lon, date) {
         try {
-            const dateStr = date || new Date().toISOString().split('T')[0];
-            const url = `https://api.timezonedb.com/v2.1/get-time-zone?key=${TIMEZONEDB_API_KEY}&format=json&by=position&lat=${lat}&lng=${lon}&time=${new Date(dateStr).getTime() / 1000}`;
+            // Intentar cargar el archivo CSV de zonas horarias
+            const response = await fetch('time_zone.csv');
+            const csvData = await response.text();
             
-            const response = await fetch(url);
-            const data = await response.json();
+            // Parsear el CSV
+            const lines = csvData.split('\n');
+            const headers = lines[0].split(',').map(h => h.trim());
             
-            if (data.status === 'OK') {
-                return {
-                    name: data.zoneName,
-                    offset: data.gmtOffset / 3600, // Convertir a horas
-                    abbreviation: data.abbreviation
-                };
+            // Enfoques de búsqueda basados en el contenido del CSV
+            // Intenta encontrar columnas que podrían contener información de zona horaria
+            
+            // Buscando columnas para offset, nombre de zona, etc.
+            const possibleOffsetColumns = headers.filter(h => 
+                h.toLowerCase().includes('offset') || 
+                h.toLowerCase().includes('utc') || 
+                h.toLowerCase().includes('gmt') ||
+                h.match(/^[-+]?\d/)
+            );
+            
+            const possibleNameColumns = headers.filter(h => 
+                h.toLowerCase().includes('zone') || 
+                h.toLowerCase().includes('region') || 
+                h.toLowerCase().includes('name') || 
+                h.toLowerCase().includes('area') ||
+                h.toLowerCase().includes('location')
+            );
+            
+            // Si no encontramos columnas adecuadas, usamos estimación por longitud
+            if (possibleOffsetColumns.length === 0) {
+                console.warn("No se encontraron columnas de offset en el CSV");
+                return estimateTimezoneByLongitude(lon);
+            }
+            
+            // Estimar la zona horaria basada en la longitud para comparación
+            const estimatedOffset = Math.round(lon / 15);
+            
+            // Buscar la zona horaria más cercana
+            let bestMatch = null;
+            let smallestDifference = Infinity;
+            
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue; // Saltar líneas vacías
+                
+                const columns = lines[i].split(',').map(c => c.trim());
+                if (columns.length < headers.length) continue;
+                
+                // Intentar encontrar el offset en las columnas candidatas
+                let foundOffset = null;
+                for (const colName of possibleOffsetColumns) {
+                    const colIndex = headers.indexOf(colName);
+                    if (colIndex >= 0) {
+                        // Intentar interpretar el valor como número
+                        const rawValue = columns[colIndex];
+                        const numValue = parseFloat(rawValue);
+                        
+                        if (!isNaN(numValue)) {
+                            foundOffset = numValue;
+                            break;
+                        } else if (typeof rawValue === 'string') {
+                            // Intentar extraer número de textos como "GMT+3" o "UTC-5"
+                            const match = rawValue.match(/[+-]?\d+(\.\d+)?/);
+                            if (match) {
+                                foundOffset = parseFloat(match[0]);
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Si no encontramos offset, saltamos esta línea
+                if (foundOffset === null) continue;
+                
+                // Calcular la diferencia con el offset estimado
+                const difference = Math.abs(estimatedOffset - foundOffset);
+                
+                if (difference < smallestDifference) {
+                    smallestDifference = difference;
+                    
+                    // Intentar obtener el nombre de la zona
+                    let zoneName = "Unknown";
+                    for (const colName of possibleNameColumns) {
+                        const colIndex = headers.indexOf(colName);
+                        if (colIndex >= 0 && columns[colIndex]) {
+                            zoneName = columns[colIndex];
+                            break;
+                        }
+                    }
+                    
+                    bestMatch = {
+                        name: zoneName,
+                        offset: foundOffset,
+                        abbreviation: `GMT${foundOffset >= 0 ? '+' : ''}${foundOffset}`,
+                        source: 'csv'
+                    };
+                }
+            }
+            
+            if (bestMatch) {
+                console.log("Zona horaria encontrada en CSV:", bestMatch);
+                return bestMatch;
             } else {
-                throw new Error(data.message || 'Error obteniendo zona horaria');
+                throw new Error('No se encontró zona horaria adecuada en el CSV');
             }
         } catch (error) {
-            console.error('Error obteniendo zona horaria:', error);
-            
-            // Estimar la zona horaria basada en la longitud
-            const estimatedOffset = Math.round(lon / 15);
-            return {
-                name: `Estimated GMT${estimatedOffset >= 0 ? '+' : ''}${estimatedOffset}`,
-                offset: estimatedOffset,
-                abbreviation: `GMT${estimatedOffset}`,
-                estimated: true
-            };
+            console.error('Error obteniendo zona horaria desde CSV:', error);
+            return estimateTimezoneByLongitude(lon);
         }
+    }
+    
+    // Función auxiliar para estimar zona horaria por longitud
+    function estimateTimezoneByLongitude(lon) {
+        const estimatedOffset = Math.round(lon / 15);
+        return {
+            name: `Estimated GMT${estimatedOffset >= 0 ? '+' : ''}${estimatedOffset}`,
+            offset: estimatedOffset,
+            abbreviation: `GMT${estimatedOffset}`,
+            estimated: true
+        };
     }
     
     // Función para mostrar resultados de búsqueda de ciudades
