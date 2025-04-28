@@ -597,37 +597,94 @@ document.addEventListener('DOMContentLoaded', function() {
         return asc;
     }
 
-// Función para determinar el signo basado en la longitud
-function getSignFromLongitude(longitude) {
-    longitude = longitude % 360;
+    // Función para determinar el signo basado en la longitud
+    function getSignFromLongitude(longitude) {
+        longitude = longitude % 360;
+        
+        for (const sign of SIGNS) {
+            const end = (sign.start + sign.length) % 360;
+            if (sign.start <= end) {
+                // Caso normal
+                if (longitude >= sign.start && longitude < end) {
+                    return sign.name;
+                }
+            } else {
+                // Caso especial que cruza 0°
+                if (longitude >= sign.start || longitude < end) {
+                    return sign.name;
+                }
+            }
+        }
+        
+        return "ARIES"; // Por defecto
+    }
     
-    for (const sign of SIGNS) {
-        const end = (sign.start + sign.length) % 360;
-        if (sign.start <= end) {
-            // Caso normal
-            if (longitude >= sign.start && longitude < end) {
-                return sign.name;
-            }
-        } else {
-            // Caso especial que cruza 0°
-            if (longitude >= sign.start || longitude < end) {
-                return sign.name;
-            }
+    // Función para calcular duración en las fardarias
+    function calculateDuration(planet, level) {
+        const number = PLANET_DATA[planet].numero;
+        switch(level) {
+            case 1: return number * DURACIONES.AÑO;
+            case 2: return number * DURACIONES.MES;
+            case 3: return number * DURACIONES.SEMANA;
+            case 4: return number * DURACIONES.DIA;
+            default: return 0;
         }
     }
     
-    return "ARIES"; // Por defecto
-}
-
-    // Determinar si un nacimiento es seco o húmedo
-function isDryBirth(sunLongitude, ascLongitude) {
-    // Es seco cuando el Sol está entre las casas 6 y 11 (inclusive)
-    const diff = (sunLongitude - ascLongitude) % 360;
-    const house = Math.floor(diff / 30) + 1;
+    // Función para obtener orden rotado de planetas
+    function getRotatedPlanets(startPlanet, planetOrder) {
+        const index = planetOrder.indexOf(startPlanet);
+        return [...planetOrder.slice(index), ...planetOrder.slice(0, index)];
+    }
     
-    // Es seco si el Sol está en las casas 6 a 11
-    return house >= 6 && house <= 11;
-}
+    // Función para convertir días a fecha
+    function calculateDate(birthDate, dayOffset) {
+        const date = new Date(birthDate);
+        date.setDate(date.getDate() + Math.floor(dayOffset));
+        return date;
+    }
+    
+    // Función para calcular subperiodos de Fardarias
+    function calculateSubPeriods(mainPlanet, level, startDay, endDay, birthDate, planetOrder) {
+        if (level > 4) return [];
+        
+        const periods = [];
+        let currentDay = startDay;
+        const rotatedPlanets = getRotatedPlanets(mainPlanet, planetOrder);
+        
+        rotatedPlanets.forEach(planet => {
+            const duration = calculateDuration(planet, level);
+            const actualDuration = Math.min(duration, endDay - currentDay);
+            
+            if (actualDuration > 0) {
+                const startDate = calculateDate(birthDate, currentDay);
+                const endDate = calculateDate(birthDate, currentDay + actualDuration);
+                
+                const period = {
+                    planet,
+                    level,
+                    start: startDate,
+                    end: endDate,
+                    startDay: currentDay,
+                    durationDays: actualDuration
+                };
+                
+                period.subPeriods = calculateSubPeriods(
+                    planet,
+                    level + 1,
+                    currentDay,
+                    currentDay + actualDuration,
+                    birthDate,
+                    planetOrder
+                );
+                
+                periods.push(period);
+                currentDay += actualDuration;
+            }
+        });
+        
+        return periods;
+    }
     
     // Función para renderizar la carta astral
     function renderChart() {
@@ -1035,6 +1092,13 @@ function isDryBirth(sunLongitude, ascLongitude) {
         return allPeriods;
     }
     
+    // Función para generar secuencia de relevos zodiacales
+    function generarSecuencia(inicio) {
+        const orden = Object.keys(SIGNOS);
+        const idx = orden.indexOf(inicio.toLowerCase());
+        return [...orden.slice(idx), ...orden.slice(0, idx)];
+    }
+    
     // Función para calcular periodos de relevos zodiacales (hasta 84 años)
     function calcularRelevodPeriods(fechaNac, ascendente) {
         const secuencia = generarSecuencia(ascendente);
@@ -1113,6 +1177,58 @@ function isDryBirth(sunLongitude, ascLongitude) {
                 diaActual += diasEnPeriodo;
                 
                 if (diaActual >= maxDays) break;
+            }
+        }
+        
+        return periodos;
+    }
+    
+    // Función para calcular subperiodos de relevos zodiacales
+    function calcularRelevodSubperiodos(fechaNac, diaInicio, duracionTotal, secuencia, idxInicial, nivel) {
+        if (nivel > 4) return [];
+        
+        const periodos = [];
+        let diaActual = 0;
+        const unidadTiempo = nivel === 2 ? 'meses' : nivel === 3 ? 'semanas' : 'dias';
+        const duracionUnidad = nivel === 2 ? DURACIONES.MES : nivel === 3 ? DURACIONES.SEMANA : DURACIONES.DIA;
+        
+        while (diaActual < duracionTotal) {
+            for (let i = 0; i < secuencia.length && diaActual < duracionTotal; i++) {
+                const signo = secuencia[(idxInicial + i) % secuencia.length];
+                const duracionPeriodo = DURACION_POR_NIVEL[signo] * duracionUnidad;
+                const duracionReal = Math.min(duracionPeriodo, duracionTotal - diaActual);
+                
+                if (duracionReal > 0) {
+                    const fechaInicio = new Date(fechaNac);
+                    fechaInicio.setDate(fechaNac.getDate() + diaInicio + diaActual);
+                    
+                    const fechaFin = new Date(fechaNac);
+                    fechaFin.setDate(fechaNac.getDate() + diaInicio + diaActual + duracionReal);
+                    
+                    const periodo = {
+                        signo: signo,
+                        level: nivel,
+                        planeta: SIGNOS[signo].planeta,
+                        start: fechaInicio,
+                        end: fechaFin,
+                        startDay: diaInicio + diaActual,
+                        durationDays: duracionReal
+                    };
+                    
+                    if (nivel < 4) {
+                        periodo.subPeriods = calcularRelevodSubperiodos(
+                            fechaNac,
+                            diaInicio + diaActual,
+                            duracionReal,
+                            secuencia,
+                            (idxInicial + i) % secuencia.length,
+                            nivel + 1
+                        );
+                    }
+                    
+                    periodos.push(periodo);
+                    diaActual += duracionReal;
+                }
             }
         }
         
@@ -1199,6 +1315,16 @@ function isDryBirth(sunLongitude, ascLongitude) {
         return resultado;
     }
     
+    // Determinar si un nacimiento es seco o húmedo
+    function isDryBirth(sunLongitude, ascLongitude) {
+        // Es seco cuando el Sol está entre las casas 6 y 11 (inclusive)
+        const diff = (sunLongitude - ascLongitude) % 360;
+        const house = Math.floor(diff / 30) + 1;
+        
+        // Es seco si el Sol está en las casas 6 a 11
+        return 6 <= house && house <= 11;
+    }
+    
     // Simulación de posiciones planetarias
     function mockCalculatePositions(isNatal, ascSign = null, ascLongitude = null) {
         const basePositions = [
@@ -1207,149 +1333,4 @@ function isDryBirth(sunLongitude, ascLongitude) {
             { name: "MERCURIO", longitude: isNatal ? 135 : 145, sign: isNatal ? "LEO" : "VIRGO" },
             { name: "VENUS", longitude: isNatal ? 90 : 100, sign: isNatal ? "CÁNCER" : "CÁNCER" },
             { name: "MARTE", longitude: isNatal ? 210 : 240, sign: isNatal ? "ESCORPIO" : "SAGITARIO" },
-            { name: "JÚPITER", longitude: isNatal ? 270 : 290, sign: isNatal ? "CAPRICORNIO" : "CAPRICORNIO" },
-            { name: "SATURNO", longitude: isNatal ? 330 : 350, sign: isNatal ? "PISCIS" : "PISCIS" },
-            { name: "URANO", longitude: isNatal ? 30 : 32, sign: isNatal ? "TAURO" : "TAURO" },
-            { name: "NEPTUNO", longitude: isNatal ? 354 : 355, sign: isNatal ? "ARIES" : "ARIES" },
-            { name: "PLUTÓN", longitude: isNatal ? 252 : 254, sign: isNatal ? "SAGITARIO" : "SAGITARIO" }
-        ];
-        
-        // Si tenemos un ascendente calculado, usarlo para la carta natal
-        if (ascSign && ascLongitude !== null) {
-            // Añadir el ascendente calculado
-            basePositions.push({ name: "ASC", longitude: ascLongitude, sign: ascSign });
-            
-            // Añadir el MC (aproximadamente a 90° del Ascendente)
-            const mcLongitude = (ascLongitude + 90) % 360;
-            const mcSign = getSignFromLongitude(mcLongitude);
-            basePositions.push({ name: "MC", longitude: mcLongitude, sign: mcSign });
-        } else {
-            // Usar valores por defecto
-            basePositions.push({ name: "ASC", longitude: isNatal ? 0 : 10, sign: isNatal ? "ARIES" : "ARIES" });
-            basePositions.push({ name: "MC", longitude: isNatal ? 270 : 280, sign: isNatal ? "CAPRICORNIO" : "CAPRICORNIO" });
-        }
-        
-        // Añadir variación a las posiciones para la segunda carta
-        if (!isNatal) {
-            return basePositions.map(planet => ({
-                ...planet,
-                longitude: (planet.longitude + Math.random() * 20 - 10) % 360
-            }));
-        }
-        
-        return basePositions;
-    }
-    
-    // Obtener color para un planeta según su posición
-    function getPlanetColor(planet, longitude) {
-        if (planet === 'ASC' || planet === 'MC' || planet === 'DSC' || planet === 'IC') return '#000000';
-        
-        if (planet === 'JÚPITER') {
-            if ((longitude >= 306.00 && longitude <= 360.00) || (longitude >= 0.00 && longitude <= 150.00)) 
-                return COLORS.BLUE;
-            if (longitude > 150.00 && longitude < 306.00) 
-                return COLORS.RED;
-        }
-        
-        if (planet === 'SATURNO') {
-            if ((longitude >= 330.00 && longitude <= 360.00) || (longitude >= 0.00 && longitude <= 150.00))
-                return COLORS.YELLOW;
-            if (longitude > 240.00 && longitude <= 252.00) return COLORS.YELLOW;
-            if (longitude > 252.00 && longitude <= 330.00) return COLORS.RED;
-            if (longitude > 150.00 && longitude <= 240.00) return COLORS.RED;
-            return COLORS.YELLOW;
-        }
-        
-        if (longitude > 150.00 && longitude <= 330.00) {
-            switch(planet) {
-                case 'SOL': case 'MERCURIO': case 'URANO': return COLORS.GREEN;
-                case 'VENUS': case 'LUNA': return COLORS.YELLOW;
-                case 'MARTE': case 'PLUTÓN': return COLORS.BLUE;
-                case 'NEPTUNO': return COLORS.RED;
-                default: return '#000000';
-            }
-        } else {
-            switch(planet) {
-                case 'SOL': case 'MARTE': case 'PLUTÓN': return COLORS.RED;
-                case 'VENUS': return COLORS.GREEN;
-                case 'MERCURIO': case 'SATURNO': case 'URANO': return COLORS.YELLOW;
-                case 'LUNA': case 'NEPTUNO': return COLORS.BLUE;
-                default: return '#000000';
-            }
-        }
-    }
-    
-    // Función para crear path SVG de arco
-    function createArcPath(startAngle, endAngle) {
-        const start = ((startAngle - 90) * Math.PI) / 180;
-        const end = ((endAngle - 90) * Math.PI) / 180;
-        
-        const x1 = DIMENSIONS.centerX + DIMENSIONS.radius * Math.cos(start);
-        const y1 = DIMENSIONS.centerY + DIMENSIONS.radius * Math.sin(start);
-        const x2 = DIMENSIONS.centerX + DIMENSIONS.radius * Math.cos(end);
-        const y2 = DIMENSIONS.centerY + DIMENSIONS.radius * Math.sin(end);
-        
-        const x1Inner = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(start);
-        const y1Inner = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(start);
-        const x2Inner = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(end);
-        const y2Inner = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(end);
-        
-        const largeArcFlag = end - start <= Math.PI ? "0" : "1";
-        
-        return `M ${x1} ${y1} A ${DIMENSIONS.radius} ${DIMENSIONS.radius} 0 ${largeArcFlag} 1 ${x2} ${y2} L ${x2Inner} ${y2Inner} A ${DIMENSIONS.innerRadius} ${DIMENSIONS.innerRadius} 0 ${largeArcFlag} 0 ${x1Inner} ${y1Inner} Z`;
-    }
-    
-    // Función para mostrar un mensaje de error
-    function showError(message, isError = true) {
-        errorMsg.textContent = message;
-        errorMsg.classList.remove('hidden');
-        
-        if (isError) {
-            errorMsg.classList.add('text-red-500');
-            errorMsg.classList.remove('text-blue-500');
-        } else {
-            errorMsg.classList.add('text-blue-500');
-            errorMsg.classList.remove('text-red-500');
-        }
-    }
-    
-// Función para limpiar mensaje de error
-    function clearError() {
-        errorMsg.textContent = '';
-        errorMsg.classList.add('hidden');
-    }
-    
-    // Función para crear elementos SVG
-    function appendSVG(tag, attributes) {
-        const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
-        for (const [key, value] of Object.entries(attributes)) {
-            element.setAttribute(key, value);
-        }
-        chartSvg.appendChild(element);
-        return element;
-    }
-    
-    // Función para formatear fecha
-    function formatDate(date) {
-        if (!(date instanceof Date)) return '';
-        
-        const day = date.getDate().toString().padStart(2, '0');
-        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-        const year = date.getFullYear();
-        
-        return `${day}/${month}/${year}`;
-    }
-    
-    // Función de debounce para evitar demasiadas llamadas a la API
-    function debounce(func, wait) {
-        let timeout;
-        return function(...args) {
-            const context = this;
-            clearTimeout(timeout);
-            timeout = setTimeout(() => func.apply(context, args), wait);
-        };
-    }
-    
-    // Iniciar la aplicación
-    init();
-});
+            { name: "JÚ
