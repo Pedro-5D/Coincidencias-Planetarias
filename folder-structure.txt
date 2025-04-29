@@ -1,6 +1,0 @@
-carta-astral-doble/
-├── index.html
-├── js/
-│   └── chart.js
-├── server.py
-└── README.md
