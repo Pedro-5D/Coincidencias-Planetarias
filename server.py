@@ -1336,8 +1336,6 @@ def calculate_coincidence():
                 transit_positions = calculate_positions_with_approximation(utc_date)
                 
             # Hacer una variación determinista basada en la fecha
-            day_of_
-            # Hacer una variación determinista basada en la fecha
             day_of_year = coincidence_date.timetuple().tm_yday
             
             for planet in transit_positions:
@@ -1376,7 +1374,7 @@ def calculate_coincidences():
         if start_year is None:
             start_year = datetime.strptime(birth_date, '%Y-%m-%d').year
         if end_year is None:
-            start_year = start_year + 5
+            end_year = start_year + 5
         
         # Asegurar que los años sean enteros
         start_year = int(start_year)
