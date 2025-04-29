@@ -217,10 +217,16 @@
 
             <!-- Formulario de tránsitos -->
             <div class="row mb-3">
-                <div class="col-md-12">
+                <div class="col-md-6">
                     <div class="form-check form-switch">
                         <input class="form-check-input" type="checkbox" id="showTransits" checked>
                         <label class="form-check-label" for="showTransits">Mostrar Tránsitos</label>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="calculateCoincidences">
+                        <label class="form-check-label" for="calculateCoincidences">Calcular Coincidencias</label>
                     </div>
                 </div>
             </div>
@@ -244,6 +250,24 @@
                         <div class="mb-3">
                             <label for="transitTime" class="form-label">Hora de Tránsito</label>
                             <input type="time" class="form-control" id="transitTime">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Opciones de coincidencias -->
+            <div id="coincidencesOptions" style="display: none;">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="startYear" class="form-label">Año inicial</label>
+                            <input type="number" class="form-control" id="startYear" min="1900" max="2100">
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="endYear" class="form-label">Año final</label>
+                            <input type="number" class="form-control" id="endYear" min="1900" max="2100">
                         </div>
                     </div>
                 </div>
@@ -305,7 +329,16 @@
                     
                     <!-- Pestaña de Coincidencias -->
                     <div class="tab-pane fade" id="coincidences" role="tabpanel" aria-labelledby="coincidences-tab">
-                        <h4>Coincidencias por Año</h4>
+                        <div id="coincidencesLoading" class="text-center p-3 d-none">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Cargando...</span>
+                            </div>
+                            <p class="mt-2">Calculando coincidencias...</p>
+                        </div>
+                        <div id="noCoincidencesMessage" class="text-center p-3">
+                            <p>No se han calculado coincidencias.</p>
+                            <button id="loadCoincidencesBtn" class="btn btn-primary">Calcular Coincidencias</button>
+                        </div>
                         <div id="coincidencesList"></div>
                     </div>
                 </div>
@@ -388,6 +421,7 @@
         let selectedAspect = null;
         let isDry = null;
         let ascendenteName = '';
+        let birthDate = null;
 
         // Elementos DOM
         const cityInput = document.getElementById('city');
@@ -399,6 +433,10 @@
         const transitDateInput = document.getElementById('transitDate');
         const transitTimeInput = document.getElementById('transitTime');
         const showTransitsToggle = document.getElementById('showTransits');
+        const calculateCoincidencesToggle = document.getElementById('calculateCoincidences');
+        const coincidencesOptions = document.getElementById('coincidencesOptions');
+        const startYearInput = document.getElementById('startYear');
+        const endYearInput = document.getElementById('endYear');
         const transitsContainer = document.getElementById('transitsContainer');
         const calculateBtn = document.getElementById('calculateBtn');
         const chartContent = document.getElementById('chartContent');
@@ -408,6 +446,9 @@
         const internalAspectsContainer = document.getElementById('internalAspects');
         const interChartAspectsContainer = document.getElementById('interChartAspects');
         const coincidencesListContainer = document.getElementById('coincidencesList');
+        const coincidencesLoading = document.getElementById('coincidencesLoading');
+        const noCoincidencesMessage = document.getElementById('noCoincidencesMessage');
+        const loadCoincidencesBtn = document.getElementById('loadCoincidencesBtn');
         const loadingIndicator = document.getElementById('loadingIndicator');
         const chartTooltip = document.getElementById('chartTooltip');
         const errorAlert = document.getElementById('errorAlert');
@@ -425,6 +466,11 @@
             transitDateInput.value = now.toISOString().split('T')[0];
             transitTimeInput.value = now.toTimeString().slice(0, 5);
             
+            // Establecer años por defecto para las coincidencias
+            const currentYear = now.getFullYear();
+            startYearInput.value = currentYear;
+            endYearInput.value = currentYear + 5;
+            
             // Event listeners
             cityInput.addEventListener('input', debounce(function() {
                 handleCitySearch(cityInput.value, false);
@@ -435,13 +481,21 @@
             }, 300));
             
             showTransitsToggle.addEventListener('change', toggleTransits);
+            calculateCoincidencesToggle.addEventListener('change', toggleCoincidencesOptions);
             calculateBtn.addEventListener('click', calculateChart);
+            loadCoincidencesBtn.addEventListener('click', loadCoincidences);
+            
+            // Listener para cambio de pestañas
+            document.getElementById('coincidences-tab').addEventListener('click', function() {
+                checkCoincidencesStatus();
+            });
             
             // Ocultar loading
             loadingIndicator.style.display = 'none';
             
             // Inicializar el estado de los tránsitos
             toggleTransits();
+            toggleCoincidencesOptions();
         }
 
         // Función para manejar la búsqueda de ciudades
@@ -505,6 +559,32 @@
             }
         }
 
+        // Función para mostrar/ocultar opciones de coincidencias
+        function toggleCoincidencesOptions() {
+            const isChecked = calculateCoincidencesToggle.checked;
+            coincidencesOptions.style.display = isChecked ? 'block' : 'none';
+        }
+
+        // Función para comprobar el estado de las coincidencias
+        function checkCoincidencesStatus() {
+            if (coincidences.length > 0) {
+                // Ya tenemos coincidencias cargadas
+                coincidencesLoading.classList.add('d-none');
+                noCoincidencesMessage.classList.add('d-none');
+                coincidencesListContainer.style.display = 'block';
+            } else if (natalPlanets.length > 0) {
+                // Tenemos carta pero no coincidencias
+                coincidencesLoading.classList.add('d-none');
+                noCoincidencesMessage.classList.remove('d-none');
+                coincidencesListContainer.style.display = 'none';
+            } else {
+                // No hay carta calculada todavía
+                coincidencesLoading.classList.add('d-none');
+                noCoincidencesMessage.classList.remove('d-none');
+                coincidencesListContainer.style.display = 'none';
+            }
+        }
+
         // Función para calcular la carta astral
         function calculateChart() {
             // Validar entradas
@@ -521,6 +601,9 @@
             // Mostrar loading
             loadingIndicator.style.display = 'flex';
             hideError();
+            
+            // Guardar fecha de nacimiento para uso posterior
+            birthDate = dateInput.value;
             
             // Calcular carta natal
             const natalData = {
@@ -545,7 +628,14 @@
                 // Guardar datos
                 natalPlanets = data.positions;
                 internalAspects = data.aspects;
-                coincidences = data.coincidencias || [];
+                
+                // Solo cargar coincidencias si está activada la opción
+                if (calculateCoincidencesToggle.checked) {
+                    coincidences = data.coincidencias || [];
+                } else {
+                    coincidences = [];
+                }
+                
                 isDry = data.isDry;
                 
                 // Mostrar información del ascendente
@@ -595,6 +685,69 @@
                 console.error('Error calculando carta:', error);
                 showError("Error calculando carta: " + error.message);
                 loadingIndicator.style.display = 'none';
+            });
+        }
+
+        // Función para cargar coincidencias bajo demanda
+        function loadCoincidences() {
+            if (!natalPlanets.length) {
+                showError("Debes calcular la carta natal primero.");
+                return;
+            }
+            
+            // Validar años
+            const startYear = parseInt(startYearInput.value);
+            const endYear = parseInt(endYearInput.value);
+            
+            if (isNaN(startYear) || isNaN(endYear) || startYear > endYear) {
+                showError("El rango de años no es válido.");
+                return;
+            }
+            
+            // Mostrar indicador de carga
+            coincidencesLoading.classList.remove('d-none');
+            noCoincidencesMessage.classList.add('d-none');
+            
+            // Preparar datos
+            const requestData = {
+                birthDate: birthDate,
+                isDry: isDry,
+                ascendente: ascendenteName.toLowerCase(),
+                startYear: startYear,
+                endYear: endYear
+            };
+            
+            // Llamada a endpoint específico para calcular coincidencias
+            fetch('/calculate_coincidences', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Guardar coincidencias
+                coincidences = data.coincidencias || [];
+                
+                // Actualizar UI
+                coincidencesLoading.classList.add('d-none');
+                noCoincidencesMessage.classList.add('d-none');
+                
+                // Renderizar coincidencias
+                updateCoincidencesList();
+                coincidencesListContainer.style.display = 'block';
+            })
+            .catch(error => {
+                console.error('Error calculando coincidencias:', error);
+                showError("Error calculando coincidencias: " + error.message);
+                
+                coincidencesLoading.classList.add('d-none');
+                noCoincidencesMessage.classList.remove('d-none');
             });
         }
 
@@ -661,6 +814,9 @@
             updatePlanetsList();
             updateAspectsList();
             updateCoincidencesList();
+            
+            // Verificar estado de coincidencias
+            checkCoincidencesStatus();
             
             // Mostrar la carta
             chartContent.style.display = 'flex';
