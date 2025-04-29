@@ -120,26 +120,31 @@ def preload_resources():
     
     print("Precargando recursos...")
     
-    # Cargar efemérides solo si Skyfield está disponible
-    if SKYFIELD_AVAILABLE:
-        try:
-            # Buscar archivo de efemérides
-            for eph_file in ['de421.bsp', 'de440s.bsp', 'docs/de421.bsp']:
-                eph_path = Path(eph_file)
-                if eph_path.exists():
-                    print(f"Cargando efemérides desde: {eph_path}")
-                    eph = load(str(eph_path))
-                    break
-            
-            if eph is None:
-                print("No se encontraron efemérides locales, intentando descargar...")
-                eph = load('de421.bsp')  # Esto descargará el archivo si no existe
-            
-            ts = load.timescale()
-            print("Efemérides cargadas correctamente")
-        except Exception as e:
-            print(f"Error cargando efemérides: {e}")
-            SKYFIELD_AVAILABLE = False
+    # En lugar de verificar SKYFIELD_AVAILABLE, comprueba si 'eph' o 'ts' ya están importados
+    try:
+        if 'load' in globals() and 'wgs84' in globals():
+            # Código para cargar efemérides
+            try:
+                # Buscar archivo de efemérides
+                for eph_file in ['de421.bsp', 'de440s.bsp', 'docs/de421.bsp']:
+                    eph_path = Path(eph_file)
+                    if eph_path.exists():
+                        print(f"Cargando efemérides desde: {eph_path}")
+                        eph = load(str(eph_path))
+                        break
+                
+                if eph is None:
+                    print("No se encontraron efemérides locales, intentando descargar...")
+                    eph = load('de421.bsp')  # Esto descargará el archivo si no existe
+                
+                ts = load.timescale()
+                print("Efemérides cargadas correctamente")
+            except Exception as e:
+                print(f"Error cargando efemérides: {e}")
+    except Exception as e:
+        print(f"Skyfield no disponible o error al cargar: {e}")
+    
+    # Resto del código...
     
     # Cargar zona horaria desde CSV
     try:
