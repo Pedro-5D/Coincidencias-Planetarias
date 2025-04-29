@@ -1,13 +1,41 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
+from flask_compress import Compress
 from datetime import datetime, timezone, timedelta
 import sys
 import os
 import requests
 import math
+import csv
+from pathlib import Path
+from functools import lru_cache
+
+try:
+    from skyfield.api import load, wgs84
+    import numpy as np
+    SKYFIELD_AVAILABLE = True
+    print("Skyfield disponible para cálculos astronómicos precisos")
+except ImportError:
+    SKYFIELD_AVAILABLE = False
+    print("ADVERTENCIA: Skyfield no está instalado. Se usarán cálculos aproximados.")
 
 app = Flask(__name__)
-CORS(app)  # Habilitar CORS para todas las rutas
+# Configurar CORS
+CORS(app)
+# Comprimir respuestas
+try:
+    Compress(app)
+    print("Compresión de respuestas habilitada")
+except:
+    print("No se pudo habilitar la compresión - asegúrate de tener Flask-Compress instalado")
+
+# Variables globales para recursos precargados
+eph = None
+ts = None
+time_zone_df = None
+
+# API Key para geocodificación
+API_KEY = "e19afa2a9d6643ea9550aab89eefce0b"  # Para demo, en producción usar variables de entorno
 
 # Constantes para cálculos astrológicos
 PLANET_DATA = {
@@ -86,8 +114,594 @@ COLORS = {
     'YELLOW': '#FFFF00'
 }
 
-# API Key para geocodificación
-API_KEY = "e19afa2a9d6643ea9550aab89eefce0b"  # Para demo, en producción usar variables de entorno
+# Precarga de recursos
+def preload_resources():
+    global eph, ts, time_zone_df
+    
+    print("Precargando recursos...")
+    
+    # Cargar efemérides solo si Skyfield está disponible
+    if SKYFIELD_AVAILABLE:
+        try:
+            # Buscar archivo de efemérides
+            for eph_file in ['de421.bsp', 'de440s.bsp', 'docs/de421.bsp']:
+                eph_path = Path(eph_file)
+                if eph_path.exists():
+                    print(f"Cargando efemérides desde: {eph_path}")
+                    eph = load(str(eph_path))
+                    break
+            
+            if eph is None:
+                print("No se encontraron efemérides locales, intentando descargar...")
+                eph = load('de421.bsp')  # Esto descargará el archivo si no existe
+            
+            ts = load.timescale()
+            print("Efemérides cargadas correctamente")
+        except Exception as e:
+            print(f"Error cargando efemérides: {e}")
+            SKYFIELD_AVAILABLE = False
+    
+    # Cargar zona horaria desde CSV
+    try:
+        time_zone_df = []
+        if os.path.exists('time_zone.csv'):
+            with open('time_zone.csv', 'r') as csv_file:
+                csv_reader = csv.reader(csv_file)
+                for row in csv_reader:
+                    if len(row) >= 6:  # asegurar que hay suficientes columnas
+                        time_zone_df.append({
+                            'timezone': row[0],
+                            'country_code': row[1],
+                            'abbreviation': row[2],
+                            'timestamp': int(row[3]) if row[3].isdigit() else 0,
+                            'utc_offset': float(row[4]) if row[4].replace('.', '', 1).isdigit() else 0,
+                            'dst': int(row[5]) if row[5].isdigit() else 0
+                        })
+            print(f"Cargado archivo de zonas horarias: {len(time_zone_df)} entradas")
+        else:
+            print("Archivo time_zone.csv no encontrado")
+    except Exception as e:
+        print(f"Error cargando zonas horarias: {e}")
+        time_zone_df = []
+    
+    print("Recursos precargados correctamente")
+
+# Cachear obtención de datos de ciudad
+@lru_cache(maxsize=100)
+def obtener_datos_ciudad(ciudad):
+    """Obtiene datos de coordenadas para una ciudad usando Geoapify"""
+    url = f"https://api.geoapify.com/v1/geocode/search?text={ciudad}&apiKey={API_KEY}"
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            datos = response.json()
+            if datos.get("features"):
+                opciones = [{
+                    "nombre": resultado["properties"]["formatted"],
+                    "lat": resultado["properties"]["lat"],
+                    "lon": resultado["properties"]["lon"],
+                    "pais": resultado["properties"].get("country", "")
+                }
+                for resultado in datos["features"]]
+                return opciones
+            return {"error": "Ciudad no encontrada"}
+        return {"error": f"Error en la consulta: {response.status_code}"}
+    except requests.exceptions.Timeout:
+        return {"error": "Timeout en la consulta"}
+    except Exception as e:
+        return {"error": f"Error: {str(e)}"}
+
+def determinar_horario_verano(fecha, hemisferio, coordenadas):
+    """
+    Determina si una fecha está en horario de verano (DST)
+    Basado en reglas históricas y específicas por país
+    """
+    año = fecha.year
+    mes = fecha.month
+    dia = fecha.day
+    
+    # Obtener país
+    pais = coordenadas.get("pais", "").lower()
+    
+    # Reglas específicas para España
+    if "spain" in pais or "españa" in pais:
+        # España antes de 1974: no había DST
+        if año < 1974:
+            return False
+        elif año >= 1974 and año <= 1975:
+            # En 1974-1975, DST fue del 13 de abril al 6 de octubre
+            if (mes > 4 and mes < 10) or (mes == 4 and dia >= 13) or (mes == 10 and dia <= 6):
+                return True
+            return False
+        elif año >= 1976 and año <= 1996:
+            # Reglas más genéricas para 1976-1996
+            # Primavera a otoño, aproximadamente marzo/abril a septiembre/octubre
+            if mes > 3 and mes < 10:
+                return True
+            return False
+        else:
+            # Desde 1997: Regla actual de la UE - último domingo de marzo a último domingo de octubre
+            if mes > 3 and mes < 10:
+                return True
+            # Marzo: último domingo
+            elif mes == 3 and dia >= 25:  # Aproximación al último domingo
+                return True
+            # Octubre: último domingo
+            elif mes == 10 and dia <= 25:  # Aproximación al último domingo
+                return True
+            return False
+    
+    # Reglas para otros países
+    # Hemisferio Norte (Europa, América del Norte, Asia)
+    elif hemisferio == "norte":
+        # La mayoría de los países del hemisferio norte siguen este patrón
+        # Horario de verano: finales de marzo a finales de octubre
+        if año < 1970:
+            # Antes de 1970 era menos común el DST
+            return False
+        
+        if mes > 3 and mes < 10:
+            return True
+        elif mes == 3 and dia >= 25:  # Aproximación al último domingo de marzo
+            return True
+        elif mes == 10 and dia <= 25:  # Aproximación al último domingo de octubre
+            return True
+        return False
+    
+    # Hemisferio Sur (Australia, Nueva Zelanda, Sudamérica)
+    else:
+        # Muchos países del hemisferio sur no utilizan DST
+        # Algunos que sí lo utilizan: Australia, Nueva Zelanda, Chile, Paraguay
+        
+        # Lista de países conocidos del hemisferio sur con DST
+        south_dst_countries = ["australia", "new zealand", "nueva zelanda", "chile", "paraguay"]
+        
+        # Si no está en la lista, asumimos que no usa DST
+        pais_usa_dst = any(country in pais for country in south_dst_countries)
+        if not pais_usa_dst:
+            return False
+            
+        # Horario de verano: finales de octubre a finales de marzo
+        if mes < 3 or mes > 10:
+            return True
+        elif mes == 3 and dia <= 25:  # Aproximación al último domingo de marzo
+            return True
+        elif mes == 10 and dia >= 25:  # Aproximación al último domingo de octubre
+            return True
+        return False
+
+def obtener_zona_horaria(coordenadas, fecha):
+    """
+    Obtiene la zona horaria usando el archivo time_zone.csv y ajusta para horario de verano/invierno
+    basado en las coordenadas y la fecha, considerando hemisferio norte/sur
+    """
+    try:
+        lat = coordenadas["lat"]
+        lon = coordenadas["lon"]
+        fecha_obj = datetime.strptime(fecha, "%Y-%m-%d")
+        
+        # Determinar hemisferio (norte o sur)
+        hemisferio = "norte" if lat >= 0 else "sur"
+        
+        # Verificar si la fecha está en horario de verano
+        is_dst = determinar_horario_verano(fecha_obj, hemisferio, coordenadas)
+        
+        # Buscar en el CSV por aproximación de longitud
+        estimated_offset = round(lon / 15)
+        
+        # Ajustar para países específicos con información conocida
+        pais = coordenadas.get("pais", "").lower()
+        abbr = "UTC"
+        tz_name = "UTC"
+        offset = estimated_offset  # valor por defecto
+        
+        if "spain" in pais or "españa" in pais:
+            tz_name = "Europe/Madrid"
+            abbr = "CET"
+            abbr_dst = "CEST"
+            offset = 1
+            if is_dst:
+                offset = 2
+                abbr = abbr_dst
+        elif "argentina" in pais:
+            tz_name = "America/Argentina/Buenos_Aires"
+            abbr = "ART"
+            offset = -3
+            # Argentina no usa DST actualmente
+        elif "mexico" in pais or "méxico" in pais:
+            tz_name = "America/Mexico_City"
+            abbr = "CST"
+            abbr_dst = "CDT"
+            offset = -6
+            if is_dst:
+                offset = -5
+                abbr = abbr_dst
+        else:
+            # Buscar en el CSV la zona más cercana a la longitud estimada
+            closest_zone = None
+            min_diff = float('inf')
+            
+            if time_zone_df:
+                for zone in time_zone_df:
+                    # Los offsets en el CSV están en segundos, convertir a horas
+                    csv_offset = zone['utc_offset'] / 3600
+                    diff = abs(csv_offset - estimated_offset)
+                    
+                    if diff < min_diff:
+                        min_diff = diff
+                        closest_zone = zone
+                
+                if closest_zone:
+                    offset = closest_zone['utc_offset'] / 3600
+                    abbr = closest_zone['abbreviation']
+                    tz_name = closest_zone['timezone']
+                    
+                    # Ajustar por DST si corresponde
+                    if is_dst and closest_zone['dst'] == 1:
+                        offset += 1
+            else:
+                # Si no hay datos en el CSV, usar la estimación por longitud
+                offset = estimated_offset
+                abbr = f"GMT{offset:+d}"
+                tz_name = f"Estimated/GMT{offset:+d}"
+        
+        print(f"Zona horaria determinada: {tz_name}, offset: {offset}, DST: {is_dst}")
+        
+        return {
+            "name": tz_name,
+            "offset": offset,
+            "abbreviation": abbr,
+            "is_dst": is_dst,
+            "hemisphere": hemisferio
+        }
+    
+    except Exception as e:
+        print(f"Error obteniendo zona horaria: {str(e)}")
+        # Si hay un error, devolver un mensaje claro
+        print("Error en obtención de zona horaria, usando estimación basada en longitud")
+        
+        try:
+            # Estimar zona horaria basada en longitud
+            lon = coordenadas["lon"]
+            estimated_offset = round(lon / 15)  # 15 grados = 1 hora
+            
+            # Para ciudades conocidas, usar valores predeterminados
+            pais = coordenadas.get("pais", "").lower()
+            
+            if "spain" in pais or "españa" in pais:
+                estimated_offset = 1
+            elif "argentina" in pais:
+                estimated_offset = -3
+            elif "mexico" in pais or "méxico" in pais:
+                estimated_offset = -6
+            elif "united states" in pais or "estados unidos" in pais:
+                # Aproximación basada en longitud para EEUU
+                if lon < -100:
+                    estimated_offset = -8  # Pacífico
+                elif lon < -90:
+                    estimated_offset = -7  # Montaña
+                elif lon < -75:
+                    estimated_offset = -6  # Central
+                else:
+                    estimated_offset = -5  # Este
+            
+            return {
+                "name": f"GMT{estimated_offset:+d}",
+                "offset": estimated_offset,
+                "abbreviation": f"GMT{estimated_offset:+d}",
+                "is_dst": False,
+                "hemisphere": "norte" if coordenadas["lat"] >= 0 else "sur",
+                "estimated": True
+            }
+        except Exception as inner_e:
+            print(f"Error en estimación de zona horaria: {str(inner_e)}")
+            # Valor por defecto UTC si todo falla
+            return {
+                "name": "UTC",
+                "offset": 0,
+                "abbreviation": "UTC",
+                "is_dst": False,
+                "hemisphere": "norte",
+                "estimated": True
+            }
+
+def convertir_a_utc(fecha, hora, timezone_info):
+    """
+    Convierte fecha y hora local a UTC considerando zona horaria y DST
+    Para cálculos astrológicos correctos, debemos asegurarnos de que la hora UTC sea precisa
+    """
+    try:
+        # Combinar fecha y hora en un objeto datetime
+        fecha_hora_str = f"{fecha} {hora}"
+        dt_local = datetime.strptime(fecha_hora_str, "%Y-%m-%d %H:%M")
+        
+        # Obtener offset en horas desde la API de zona horaria
+        # Si estamos en DST, la API ya incluye ese offset
+        offset_hours = timezone_info["offset"]
+        
+        print(f"Offset de zona horaria: {offset_hours} horas")
+        print(f"Hora local ingresada: {dt_local}")
+        
+        # Crear un timezone con el offset
+        tz = timezone(timedelta(hours=offset_hours))
+        
+        # Aplicar timezone al datetime
+        dt_local_with_tz = dt_local.replace(tzinfo=tz)
+        
+        # Convertir a UTC
+        dt_utc = dt_local_with_tz.astimezone(timezone.utc)
+        
+        print(f"Hora convertida a UTC: {dt_utc}")
+        return dt_utc
+    except Exception as e:
+        print(f"Error en conversión a UTC: {str(e)}")
+        # Si falla, usar la hora proporcionada con offset manual aproximado
+        dt_local = datetime.strptime(f"{fecha} {hora}", "%Y-%m-%d %H:%M")
+        
+        # Intentar estimar offset basado en longitud si no tenemos zona horaria
+        if "estimated" in timezone_info and timezone_info["offset"] is not None:
+            est_offset = timezone_info["offset"]
+            est_tz = timezone(timedelta(hours=est_offset))
+            dt_with_tz = dt_local.replace(tzinfo=est_tz)
+            return dt_with_tz.astimezone(timezone.utc)
+        
+        # Fallback: asumir UTC
+        return dt_local.replace(tzinfo=timezone.utc)
+
+def calculate_asc_mc(t, lat, lon):
+    """
+    Calcula el Ascendente y Medio Cielo usando algoritmos astronómicos precisos
+    """
+    try:
+        if SKYFIELD_AVAILABLE:
+            # Usar Skyfield para cálculos precisos
+            gst = t.gast  # Hora sideral en Greenwich en grados
+            lst = (gst * 15 + lon) % 360  # Hora sideral local en grados
+            mc = lst % 360  # Medio Cielo
+            
+            # Calcular Ascendente
+            lat_rad = np.radians(lat)
+            ra_rad = np.radians(lst)
+            eps_rad = np.radians(23.4367)  # Oblicuidad de la eclíptica
+            
+            tan_asc = np.cos(ra_rad) / (np.sin(ra_rad) * np.cos(eps_rad) + np.tan(lat_rad) * np.sin(eps_rad))
+            asc = np.degrees(np.arctan(-tan_asc))
+            
+            # Ajustar cuadrante
+            if 0 <= lst <= 180:
+                if np.cos(ra_rad) > 0:
+                    asc = (asc + 180) % 360
+            else:
+                if np.cos(ra_rad) < 0:
+                    asc = (asc + 180) % 360
+            
+            asc = asc % 360
+            
+            # Verificar que el ascendente esté correctamente ubicado respecto al MC
+            dist_mc_asc = (asc - mc) % 360
+            if dist_mc_asc > 180:
+                asc = (asc + 180) % 360
+        else:
+            # Cálculo alternativo sin Skyfield
+            # Convertir fecha/hora a día juliano
+            dt_utc = t
+            
+            # Calcular tiempo sideral en Greenwich
+            j2000 = datetime(2000, 1, 1, 12, 0).replace(tzinfo=timezone.utc)
+            days_since_j2000 = (dt_utc - j2000).total_seconds() / 86400
+            
+            # Tiempo sideral en Greenwich en grados
+            gst = (280.16 + 360.9856235 * days_since_j2000) % 360
+            lst = (gst + lon) % 360  # Hora sideral local en grados
+            mc = lst % 360  # Medio Cielo
+            
+            # Calcular Ascendente
+            lat_rad = math.radians(lat)
+            lst_rad = math.radians(lst)
+            obl_rad = math.radians(23.4367)
+            
+            tan_asc = math.cos(lst_rad) / (math.sin(lst_rad) * math.cos(obl_rad) + math.tan(lat_rad) * math.sin(obl_rad))
+            asc = math.degrees(math.atan(-tan_asc))
+            
+            # Ajustar cuadrante
+            if 0 <= lst <= 180:
+                if math.cos(lst_rad) > 0:
+                    asc = (asc + 180) % 360
+            else:
+                if math.cos(lst_rad) < 0:
+                    asc = (asc + 180) % 360
+            
+            asc = asc % 360
+        
+        return asc, mc
+    except Exception as e:
+        print(f"Error en calculate_asc_mc: {str(e)}")
+        # Valores por defecto en caso de error
+        return 0, 0
+
+def calculate_positions_with_skyfield(utc_datetime, lat=None, lon=None):
+    """Calcula posiciones planetarias usando Skyfield para mayor precisión"""
+    try:
+        if not SKYFIELD_AVAILABLE:
+            raise Exception("Skyfield no está disponible")
+        
+        print(f"Calculando posiciones para UTC: {utc_datetime}")
+        t = ts.from_datetime(utc_datetime)
+        earth = eph['earth']
+        
+        positions = []
+        bodies = {
+            'SOL': eph['sun'],
+            'LUNA': eph['moon'],
+            'MERCURIO': eph['mercury'],
+            'VENUS': eph['venus'],
+            'MARTE': eph['mars'],
+            'JÚPITER': eph['jupiter barycenter'],
+            'SATURNO': eph['saturn barycenter'],
+            'URANO': eph['uranus barycenter'],
+            'NEPTUNO': eph['neptune barycenter'],
+            'PLUTÓN': eph['pluto barycenter']
+        }
+        
+        for body_name, body in bodies.items():
+            pos = earth.at(t).observe(body).apparent()
+            lat_ecl, lon_ecl, dist = pos.ecliptic_latlon(epoch='date')
+            
+            longitude = float(lon_ecl.degrees) % 360
+            positions.append({
+                "name": body_name,
+                "longitude": longitude,
+                "sign": get_sign(longitude)
+            })
+        
+        if lat is not None and lon is not None:
+            asc, mc = calculate_asc_mc(t, lat, lon)
+            
+            positions.append({
+                "name": "ASC",
+                "longitude": float(asc),
+                "sign": get_sign(asc)
+            })
+            
+            positions.append({
+                "name": "MC",
+                "longitude": float(mc),
+                "sign": get_sign(mc)
+            })
+            
+            # Añadir descendente (opuesto al ascendente)
+            desc = (asc + 180) % 360
+            positions.append({
+                "name": "DSC",
+                "longitude": float(desc),
+                "sign": get_sign(desc)
+            })
+            
+            # Añadir Fondo de Cielo (IC) (opuesto al MC)
+            ic = (mc + 180) % 360
+            positions.append({
+                "name": "IC",
+                "longitude": float(ic),
+                "sign": get_sign(ic)
+            })
+        
+        return positions
+    except Exception as e:
+        print(f"Error calculando posiciones con Skyfield: {str(e)}")
+        return calculate_positions_with_approximation(utc_datetime, lat, lon)
+
+def calculate_positions_with_approximation(utc_datetime, lat=None, lon=None):
+    """Método alternativo para calcular posiciones planetarias sin Skyfield"""
+    try:
+        print("Usando método aproximado para cálculos planetarios")
+        
+        # Fecha y hora en formato compatible
+        date_str = utc_datetime.strftime("%Y-%m-%d")
+        time_str = utc_datetime.strftime("%H:%M")
+        
+        # Base para cálculos aproximados basados en la época J2000
+        j2000 = datetime(2000, 1, 1, 12, 0).replace(tzinfo=timezone.utc)
+        days_since_j2000 = (utc_datetime - j2000).total_seconds() / 86400
+        
+        # Posiciones planetarias medias aproximadas (grados/día desde J2000)
+        # Estos valores son aproximados y solo para uso de demostración
+        planet_rates = {
+            'SOL': 0.9856,              # 1 vuelta al año
+            'LUNA': 13.1764,            # 1 vuelta cada ~27.3 días
+            'MERCURIO': 4.0923,         # 1 vuelta cada ~88 días
+            'VENUS': 1.6021,            # 1 vuelta cada ~225 días
+            'MARTE': 0.5240,            # 1 vuelta cada ~687 días
+            'JÚPITER': 0.0830,          # 1 vuelta cada ~12 años
+            'SATURNO': 0.0334,          # 1 vuelta cada ~29 años
+            'URANO': 0.0117,            # 1 vuelta cada ~84 años
+            'NEPTUNO': 0.006,           # 1 vuelta cada ~165 años
+            'PLUTÓN': 0.004             # 1 vuelta cada ~248 años
+        }
+        
+        # Posiciones de base en J2000 (aproximadas)
+        planet_base = {
+            'SOL': 280.0,
+            'LUNA': 218.3,
+            'MERCURIO': 90.0,
+            'VENUS': 160.0,
+            'MARTE': 200.0,
+            'JÚPITER': 270.0,
+            'SATURNO': 330.0,
+            'URANO': 30.0,
+            'NEPTUNO': 330.0,
+            'PLUTÓN': 230.0
+        }
+        
+        # Calcular posiciones actuales aproximadas
+        positions = []
+        for planet, rate in planet_rates.items():
+            base_pos = planet_base[planet]
+            current_pos = (base_pos + rate * days_since_j2000) % 360
+            
+            positions.append({
+                "name": planet,
+                "longitude": current_pos,
+                "sign": get_sign(current_pos)
+            })
+        
+        # Si tenemos coordenadas, calcular puntos cardinales de la carta
+        if lat is not None and lon is not None:
+            asc, mc = calculate_asc_mc(utc_datetime, lat, lon)
+            
+            positions.append({
+                "name": "ASC",
+                "longitude": float(asc),
+                "sign": get_sign(asc)
+            })
+            
+            positions.append({
+                "name": "MC",
+                "longitude": float(mc),
+                "sign": get_sign(mc)
+            })
+            
+            # Añadir descendente (opuesto al ascendente)
+            desc = (asc + 180) % 360
+            positions.append({
+                "name": "DSC",
+                "longitude": float(desc),
+                "sign": get_sign(desc)
+            })
+            
+            # Añadir Fondo de Cielo (IC) (opuesto al MC)
+            ic = (mc + 180) % 360
+            positions.append({
+                "name": "IC",
+                "longitude": float(ic),
+                "sign": get_sign(ic)
+            })
+        
+        return positions
+    
+    except Exception as e:
+        print(f"Error en calculate_positions_with_approximation: {str(e)}")
+        # Si todo falla, devolver datos simulados
+        return mockCalculatePositions(True)
+
+def get_sign(longitude):
+    """Determina el signo zodiacal basado en la longitud eclíptica."""
+    longitude = float(longitude) % 360
+    
+    for sign_data in SIGNS:
+        start = sign_data['start']
+        length = sign_data['length']
+        end = (start + length) % 360
+        
+        # Caso normal (sin cruzar 0°)
+        if start < end:
+            if start <= longitude < end:
+                return sign_data['name']
+        # Caso especial (cruza 0°, como Aries)
+        else:
+            if longitude >= start or longitude < end:
+                return sign_data['name']
+    
+    return "ARIES"  # Por defecto
 
 # Simulación de datos planetarios para fines de demostración
 def mockCalculatePositions(is_natal=True, asc_sign=None, asc_longitude=None):
@@ -119,26 +733,6 @@ def mockCalculatePositions(is_natal=True, asc_sign=None, asc_longitude=None):
             planet["sign"] = get_sign(planet["longitude"])
     
     return base_positions
-
-def get_sign(longitude):
-    """Determina el signo zodiacal basado en la longitud eclíptica."""
-    longitude = float(longitude) % 360
-    
-    for sign_data in SIGNS:
-        start = sign_data['start']
-        length = sign_data['length']
-        end = (start + length) % 360
-        
-        # Caso normal (sin cruzar 0°)
-        if start < end:
-            if start <= longitude < end:
-                return sign_data['name']
-        # Caso especial (cruza 0°, como Aries)
-        else:
-            if longitude >= start or longitude < end:
-                return sign_data['name']
-    
-    return "ARIES"  # Por defecto
 
 def calculate_aspects(planets1, planets2=None):
     """Calcula los aspectos entre planetas."""
@@ -491,6 +1085,9 @@ def buscar_coincidencias(periodos_fardaria, periodos_relevo):
     dias_fardaria = extraer_periodos_nivel(periodos_fardaria, 4)
     dias_relevo = extraer_periodos_nivel(periodos_relevo, 4)
     
+    print(f"Periodos de Fardaria nivel 4: {len(dias_fardaria)}")
+    print(f"Periodos de Relevo nivel 4: {len(dias_relevo)}")
+    
     # Buscar coincidencias
     for fardaria in dias_fardaria:
         for relevo in dias_relevo:
@@ -528,6 +1125,8 @@ def buscar_coincidencias(periodos_fardaria, periodos_relevo):
     
     # Ordenar por año y fecha de inicio
     coincidencias.sort(key=lambda x: (x['overlap']['year'], x['overlap']['start']))
+    
+    print(f"Total de coincidencias encontradas: {len(coincidencias)}")
     
     return coincidencias
 
@@ -633,35 +1232,30 @@ def calculate():
             return jsonify({"error": "Faltan datos necesarios"}), 400
         
         # Obtener coordenadas de la ciudad
-        city_search_results = []
+        city_data_result = obtener_datos_ciudad(city)
         
-        # Usar API de Geoapify para buscar la ciudad
-        url = f"https://api.geoapify.com/v1/geocode/search?text={city}&apiKey={API_KEY}"
-        response = requests.get(url, timeout=10)
+        if isinstance(city_data_result, dict) and "error" in city_data_result:
+            return jsonify(city_data_result), 400
         
-        if response.status_code == 200:
-            data_city = response.json()
-            
-            if "features" in data_city and len(data_city["features"]) > 0:
-                for feature in data_city["features"]:
-                    props = feature["properties"]
-                    city_search_results.append({
-                        "nombre": props.get("formatted", city),
-                        "lat": props.get("lat"),
-                        "lon": props.get("lon")
-                    })
-        
-        # Verificar si se encontró la ciudad
-        if not city_search_results:
+        if not city_data_result or len(city_data_result) == 0:
             return jsonify({"error": "No se pudo encontrar la ciudad especificada"}), 400
         
         # Usar la primera ciudad encontrada
-        city_data = city_search_results[0]
+        city_data = city_data_result[0]
         
-        # Calcular posiciones usando las funciones del código original
-        positions = mockCalculatePositions(True)
+        # Obtener zona horaria de la ciudad
+        timezone_info = obtener_zona_horaria(city_data, date)
         
-        # Obtener ASC y SOL para determinar si es seco o húmedo
+        # Convertir hora local a UTC para cálculos precisos
+        utc_datetime = convertir_a_utc(date, time, timezone_info)
+        
+        # Calcular posiciones planetarias
+        if SKYFIELD_AVAILABLE:
+            positions = calculate_positions_with_skyfield(utc_datetime, city_data["lat"], city_data["lon"])
+        else:
+            positions = calculate_positions_with_approximation(utc_datetime, city_data["lat"], city_data["lon"])
+        
+        # Extraer posiciones del ascendente y sol para verificar si es nacimiento seco o húmedo
         asc_pos = next((p for p in positions if p["name"] == "ASC"), None)
         sun_pos = next((p for p in positions if p["name"] == "SOL"), None)
         
@@ -683,7 +1277,9 @@ def calculate():
             "coordinates": {
                 "latitude": city_data["lat"],
                 "longitude": city_data["lon"]
-            }
+            },
+            "timezone": timezone_info,
+            "utc_time": utc_datetime.strftime("%Y-%m-%d %H:%M:%S")
         }
         
         # Solo calcular coincidencias si se solicita explícitamente
@@ -700,7 +1296,7 @@ def calculate():
                 "OPHIUCHUS": "ofiuco", "SAGITTARIUS": "sagitario", "CAPRICORN": "capricornio",
                 "AQUARIUS": "acuario", "PISCES": "piscis"
             }
-            relevo_signo = signo_map.get(signo_asc, "aries")
+            relevo_signo = signo_map.get(signo_asc.upper(), "aries")
             relevos = calcular_relevodPeriods(birth_date, relevo_signo)
             
             # Calcular coincidencias
@@ -728,19 +1324,31 @@ def calculate_coincidence():
             return jsonify({"error": "Fecha no especificada"}), 400
         
         # Simular posiciones planetarias para la fecha de coincidencia
-        transit_positions = mockCalculatePositions(False)
-        
-        # Añadir variación específica basada en la fecha
         try:
             coincidence_date = datetime.strptime(date, '%Y-%m-%d')
+            # Convertir a datetime con zona horaria UTC para usar con Skyfield
+            utc_date = coincidence_date.replace(tzinfo=timezone.utc)
+            
+            # Usar cálculos precisos si están disponibles
+            if SKYFIELD_AVAILABLE:
+                transit_positions = calculate_positions_with_skyfield(utc_date)
+            else:
+                transit_positions = calculate_positions_with_approximation(utc_date)
+                
+            # Hacer una variación determinista basada en la fecha
+            day_of_
+            # Hacer una variación determinista basada en la fecha
             day_of_year = coincidence_date.timetuple().tm_yday
             
             for planet in transit_positions:
-                # Hacer una variación determinista basada en la fecha
-                planet["longitude"] = (planet["longitude"] + day_of_year) % 360
+                # Añadir una variación basada en el día del año para simular diferencias
+                variation = (day_of_year % 30) / 15.0  # Variación máxima de 2 grados
+                planet["longitude"] = (planet["longitude"] + variation) % 360
                 planet["sign"] = get_sign(planet["longitude"])
-        except:
-            pass
+        except Exception as inner_e:
+            print(f"Error procesando fecha: {str(inner_e)}")
+            # Usar posiciones simuladas como fallback
+            transit_positions = mockCalculatePositions(False)
         
         return jsonify({
             "positions": transit_positions
@@ -800,6 +1408,9 @@ def calculate_coincidences():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
+    # Precargar recursos al iniciar el servidor
+    preload_resources()
+    
     # Detectar si estamos en Render
     is_render = os.environ.get('RENDER', False)
     # En Render, el puerto se proporciona como variable de entorno
