@@ -942,12 +942,24 @@ def generar_secuencia(inicio):
 
 def calcular_relevodPeriods(fecha_nac, ascendente, start_year=None, end_year=None):
     """Calcula periodos de relevo zodiacal con filtrado opcional de años."""
-    secuencia = generar_secuencia(ascendente)
+    # Normalizar y validar el ascendente
+    ascendente_lower = ascendente.lower().strip()
+    
+    # Verificar si el ascendente está en la lista de SIGNOS
+    if ascendente_lower not in SIGNOS:
+        print(f"ADVERTENCIA: Ascendente '{ascendente}' no encontrado en SIGNOS. Usando 'aries' como predeterminado.")
+        ascendente_lower = 'aries'
+    else:
+        ascendente_lower = ascendente
+    
+    # Ahora usar el ascendente validado
+    secuencia = generar_secuencia(ascendente_lower)
     
     # Asegurar que fecha_nac es un objeto datetime
     if isinstance(fecha_nac, str):
         fecha_nac = datetime.strptime(fecha_nac, '%Y-%m-%d')
     
+    # El resto del código permanece igual...
     # Si se especifican años de inicio y fin, calcular límites en días
     start_day = 0
     end_day = 84 * DURACIONES['AÑO']  # Predeterminado a 84 años
@@ -1014,7 +1026,7 @@ def calcular_relevodPeriods(fecha_nac, ascendente, start_year=None, end_year=Non
                 break
     
     return periodos
-
+    
 def calcular_relevodSubperiodos(fecha_nac, dia_inicio, duracion_total, secuencia, idx_inicial, nivel):
     """Calcula subperiodos de relevo zodiacal."""
     if nivel > 4:
