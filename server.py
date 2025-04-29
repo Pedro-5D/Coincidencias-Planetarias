@@ -3,7 +3,7 @@ from flask_cors import CORS
 import os
 import math
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import sys
 
@@ -38,6 +38,51 @@ ASPECTS = {
     "SQUARE": {"angle": 90, "orb": 2, "color": "#FF0000", "name": "Inarmónico Relevante"},
     "TRINE": {"angle": 120, "orb": 2, "color": "#000080", "name": "Armónico Relevante"},
     "OPPOSITION": {"angle": 180, "orb": 2, "color": "#000080", "name": "Armónico Relevante"}
+}
+
+# Constantes para Fardarias y Relevos Zodiacales
+PLANET_DATA = {
+    'SOL': {'numero': 1},
+    'LUNA': {'numero': 6},
+    'MERCURIO': {'numero': 4},
+    'VENUS': {'numero': 3},
+    'MARTE': {'numero': 5},
+    'JÚPITER': {'numero': 2},
+    'SATURNO': {'numero': 7}
+}
+
+PLANET_ORDER = {
+    'seco': ['SOL', 'MARTE', 'JÚPITER', 'SATURNO', 'LUNA', 'MERCURIO', 'VENUS'],
+    'humedo': ['LUNA', 'MERCURIO', 'VENUS', 'SOL', 'MARTE', 'JÚPITER', 'SATURNO']
+}
+
+DURACION_POR_NIVEL = {
+    'virgo': 4, 'libra': 3, 'escorpio': 5, 'ofiuco': 7, 'sagitario': 2,
+    'capricornio': 1, 'acuario': 6, 'piscis': 2, 'aries': 5, 'tauro': 3,
+    'geminis': 4, 'cancer': 6, 'leo': 1
+}
+
+SIGNOS = {
+    'virgo': {'planeta': 'MERCURIO', 'años': 4},
+    'libra': {'planeta': 'VENUS', 'años': 3},
+    'escorpio': {'planeta': 'MARTE', 'años': 5},
+    'ofiuco': {'planeta': 'SATURNO', 'años': 7},
+    'sagitario': {'planeta': 'JÚPITER', 'años': 2},
+    'capricornio': {'planeta': 'SOL', 'años': 1},
+    'acuario': {'planeta': 'LUNA', 'años': 6},
+    'piscis': {'planeta': 'JÚPITER', 'años': 2},
+    'aries': {'planeta': 'MARTE', 'años': 5},
+    'tauro': {'planeta': 'VENUS', 'años': 3},
+    'geminis': {'planeta': 'MERCURIO', 'años': 4},
+    'cancer': {'planeta': 'LUNA', 'años': 6},
+    'leo': {'planeta': 'SOL', 'años': 1}
+}
+
+DURACIONES = {
+    'AÑO': 364,
+    'MES': 28,
+    'SEMANA': 7,
+    'DIA': 1
 }
 
 # Simulación de datos de planetas para fines de demostración
@@ -129,6 +174,373 @@ def calculate_aspects(planets1, planets2=None):
     
     return aspects
 
+def is_dry_birth(sun_longitude, asc_longitude):
+    """Determina si un nacimiento es seco o húmedo basado en la posición del Sol."""
+    # Es seco cuando el Sol está entre las casas 6 y 11 (inclusive)
+    diff = (sun_longitude - asc_longitude) % 360
+    house = (diff / 30) + 1
+    
+    # Es seco si el Sol está en las casas 6 a 11
+    return 6 <= house <= 11
+
+# Funciones para cálculo de Fardarias
+def calculate_duration(planet, level):
+    """Calcula la duración de un periodo de Fardaria."""
+    number = PLANET_DATA[planet]['numero']
+    if level == 1:
+        return number * DURACIONES['AÑO']
+    elif level == 2:
+        return number * DURACIONES['MES']
+    elif level == 3:
+        return number * DURACIONES['SEMANA']
+    elif level == 4:
+        return number * DURACIONES['DIA']
+    return 0
+
+def get_rotated_planets(start_planet, planet_order):
+    """Obtiene la secuencia de planetas rotada a partir del planeta inicial."""
+    index = planet_order.index(start_planet)
+    return planet_order[index:] + planet_order[:index]
+
+def calculate_date_from_offset(birth_date, day_offset):
+    """Calcula una fecha a partir de una fecha base y un desplazamiento en días."""
+    if isinstance(birth_date, str):
+        birth_date = datetime.strptime(birth_date, '%Y-%m-%d')
+    
+    date = birth_date + timedelta(days=int(day_offset))
+    return date
+
+def calculate_sub_periods(main_planet, level, start_day, end_day, birth_date, planet_order):
+    """Calcula subperiodos de Fardarias."""
+    if level > 4:
+        return []
+    
+    periods = []
+    current_day = start_day
+    rotated_planets = get_rotated_planets(main_planet, planet_order)
+    
+    for planet in rotated_planets:
+        duration = calculate_duration(planet, level)
+        actual_duration = min(duration, end_day - current_day)
+        
+        if actual_duration > 0:
+            start_date = calculate_date_from_offset(birth_date, current_day)
+            end_date = calculate_date_from_offset(birth_date, current_day + actual_duration)
+            
+            period = {
+                'planet': planet,
+                'level': level,
+                'start': start_date.strftime('%Y-%m-%d'),
+                'end': end_date.strftime('%Y-%m-%d'),
+                'startDay': current_day,
+                'durationDays': actual_duration
+            }
+            
+            period['subPeriods'] = calculate_sub_periods(
+                planet,
+                level + 1,
+                current_day,
+                current_day + actual_duration,
+                birth_date,
+                planet_order
+            )
+            
+            periods.append(period)
+            current_day += actual_duration
+    
+    return periods
+
+def calculate_fardaria_periods(birth_date, is_dry, start_year=None, end_year=None):
+    """Calcula los periodos de Fardarias para una fecha de nacimiento con filtrado opcional de años."""
+    planet_order = PLANET_ORDER['seco'] if is_dry else PLANET_ORDER['humedo']
+    all_periods = []
+    current_day = 0
+    max_years = 84  # Limitar a 84 años por defecto
+    
+    # Asegurar que birth_date es un objeto datetime
+    if isinstance(birth_date, str):
+        birth_date = datetime.strptime(birth_date, '%Y-%m-%d')
+    
+    # Si se especifican años de inicio y fin, calcular límites en días
+    start_day = 0
+    end_day = max_years * DURACIONES['AÑO']  # Predeterminado a 84 años
+    
+    if start_year is not None and end_year is not None:
+        birth_year = birth_date.year
+        start_offset_years = max(0, start_year - birth_year)
+        end_offset_years = min(max_years, end_year - birth_year + 1)
+        
+        start_day = start_offset_years * DURACIONES['AÑO']
+        end_day = end_offset_years * DURACIONES['AÑO']
+    
+    # Continuar calculando periodos hasta llegar al límite
+    while current_day < end_day:
+        for planet in planet_order:
+            duration = calculate_duration(planet, 1)
+            
+            # Verificar si este periodo está dentro del rango de interés
+            if current_day + duration <= start_day:
+                # El periodo termina antes del rango, saltamos
+                current_day += duration
+                continue
+            
+            if current_day >= end_day:
+                # El periodo comienza después del rango, terminamos
+                break
+            
+            # Calcular parte del periodo dentro del rango
+            period_start_day = max(current_day, start_day)
+            period_end_day = min(current_day + duration, end_day)
+            period_duration = period_end_day - period_start_day
+            
+            if period_duration > 0:
+                start_date = calculate_date_from_offset(birth_date, period_start_day)
+                end_date = calculate_date_from_offset(birth_date, period_end_day)
+                
+                period = {
+                    'planet': planet,
+                    'level': 1,
+                    'start': start_date.strftime('%Y-%m-%d'),
+                    'end': end_date.strftime('%Y-%m-%d'),
+                    'startDay': period_start_day,
+                    'durationDays': period_duration
+                }
+                
+                # Añadir subperiodos para la parte dentro del rango
+                period['subPeriods'] = calculate_sub_periods(
+                    planet,
+                    2,
+                    period_start_day,
+                    period_end_day,
+                    birth_date,
+                    planet_order
+                )
+                
+                all_periods.append(period)
+            
+            current_day += duration
+            if current_day >= end_day:
+                break
+    
+    return all_periods
+
+# Funciones para Relevo Zodiacal
+def generar_secuencia(inicio):
+    """Genera la secuencia de signos a partir del ascendente."""
+    orden = list(SIGNOS.keys())
+    try:
+        idx = orden.index(inicio.lower())
+        return orden[idx:] + orden[:idx]
+    except ValueError:
+        # Si el ascendente no está en la lista, usar 'aries' como predeterminado
+        print(f"Ascendente '{inicio}' no encontrado, usando 'aries'")
+        idx = orden.index('aries')
+        return orden[idx:] + orden[:idx]
+
+def calcular_relevod_periods(fecha_nac, ascendente, start_year=None, end_year=None):
+    """Calcula periodos de relevo zodiacal con filtrado opcional de años."""
+    # Normalizar y validar el ascendente
+    ascendente_lower = ascendente.lower().strip()
+    
+    # Verificar si el ascendente está en la lista de SIGNOS
+    if ascendente_lower not in SIGNOS:
+        print(f"ADVERTENCIA: Ascendente '{ascendente}' no encontrado en SIGNOS. Usando 'aries' como predeterminado.")
+        ascendente_lower = 'aries'
+    
+    # Ahora usar el ascendente validado
+    secuencia = generar_secuencia(ascendente_lower)
+    
+    # Asegurar que fecha_nac es un objeto datetime
+    if isinstance(fecha_nac, str):
+        fecha_nac = datetime.strptime(fecha_nac, '%Y-%m-%d')
+    
+    # Si se especifican años de inicio y fin, calcular límites en días
+    start_day = 0
+    end_day = 84 * DURACIONES['AÑO']  # Predeterminado a 84 años
+    
+    if start_year is not None and end_year is not None:
+        birth_year = fecha_nac.year
+        start_offset_years = max(0, start_year - birth_year)
+        end_offset_years = min(84, end_year - birth_year + 1)
+        
+        start_day = start_offset_years * DURACIONES['AÑO']
+        end_day = end_offset_years * DURACIONES['AÑO']
+    
+    dia_actual = 0
+    periodos = []
+    
+    # Continuar calculando periodos hasta llegar al límite
+    while dia_actual < end_day:
+        for signo in secuencia:
+            dias_en_periodo = DURACION_POR_NIVEL[signo] * DURACIONES['AÑO']
+            
+            # Verificar si este periodo está dentro del rango de interés
+            if dia_actual + dias_en_periodo <= start_day:
+                # El periodo termina antes del rango, saltamos
+                dia_actual += dias_en_periodo
+                continue
+            
+            if dia_actual >= end_day:
+                # El periodo comienza después del rango, terminamos
+                break
+            
+            # Calcular parte del periodo dentro del rango
+            periodo_inicio_dia = max(dia_actual, start_day)
+            periodo_fin_dia = min(dia_actual + dias_en_periodo, end_day)
+            duracion_periodo = periodo_fin_dia - periodo_inicio_dia
+            
+            if duracion_periodo > 0:
+                fecha_inicio = calculate_date_from_offset(fecha_nac, periodo_inicio_dia)
+                fecha_fin = calculate_date_from_offset(fecha_nac, periodo_fin_dia)
+                
+                periodo = {
+                    'signo': signo,
+                    'level': 1,
+                    'planeta': SIGNOS[signo]['planeta'],
+                    'start': fecha_inicio.strftime('%Y-%m-%d'),
+                    'end': fecha_fin.strftime('%Y-%m-%d'),
+                    'startDay': periodo_inicio_dia,
+                    'durationDays': duracion_periodo
+                }
+                
+                # Calcular subperiodos para la parte dentro del rango
+                periodo['subPeriods'] = calcular_relevod_subperiodos(
+                    fecha_nac,
+                    periodo_inicio_dia,
+                    duracion_periodo,
+                    secuencia,
+                    secuencia.index(signo),
+                    2
+                )
+                
+                periodos.append(periodo)
+            
+            dia_actual += dias_en_periodo
+            if dia_actual >= end_day:
+                break
+    
+    return periodos
+
+def calcular_relevod_subperiodos(fecha_nac, dia_inicio, duracion_total, secuencia, idx_inicial, nivel):
+    """Calcula subperiodos de relevo zodiacal."""
+    if nivel > 4:
+        return []
+    
+    periodos = []
+    dia_actual = 0
+    unidad_tiempo = 'MES' if nivel == 2 else 'SEMANA' if nivel == 3 else 'DIA'
+    duracion_unidad = DURACIONES[unidad_tiempo]
+    
+    while dia_actual < duracion_total:
+        for i in range(len(secuencia)):
+            if dia_actual >= duracion_total:
+                break
+                
+            signo = secuencia[(idx_inicial + i) % len(secuencia)]
+            duracion_periodo = DURACION_POR_NIVEL[signo] * duracion_unidad
+            duracion_real = min(duracion_periodo, duracion_total - dia_actual)
+            
+            if duracion_real > 0:
+                fecha_inicio = calculate_date_from_offset(fecha_nac, dia_inicio + dia_actual)
+                fecha_fin = calculate_date_from_offset(fecha_nac, dia_inicio + dia_actual + duracion_real)
+                
+                periodo = {
+                    'signo': signo,
+                    'level': nivel,
+                    'planeta': SIGNOS[signo]['planeta'],
+                    'start': fecha_inicio.strftime('%Y-%m-%d'),
+                    'end': fecha_fin.strftime('%Y-%m-%d'),
+                    'startDay': dia_inicio + dia_actual,
+                    'durationDays': duracion_real
+                }
+                
+                if nivel < 4:
+                    periodo['subPeriods'] = calcular_relevod_subperiodos(
+                        fecha_nac,
+                        dia_inicio + dia_actual,
+                        duracion_real,
+                        secuencia,
+                        (idx_inicial + i) % len(secuencia),
+                        nivel + 1
+                    )
+                
+                periodos.append(periodo)
+                dia_actual += duracion_real
+    
+    return periodos
+
+def extraer_periodos_nivel(periodos, nivel):
+    """Extrae todos los periodos de un nivel específico."""
+    resultado = []
+    
+    def recorrer_periodos(periodo):
+        if periodo['level'] == nivel:
+            resultado.append(periodo)
+        elif 'subPeriods' in periodo and periodo['subPeriods']:
+            for subperiodo in periodo['subPeriods']:
+                recorrer_periodos(subperiodo)
+    
+    for periodo in periodos:
+        recorrer_periodos(periodo)
+    
+    return resultado
+
+def buscar_coincidencias(periodos_fardaria, periodos_relevo):
+    """
+    Busca coincidencias entre periodos de Fardarias y Relevos.
+    Devuelve una lista de coincidencias agrupadas por año.
+    """
+    coincidencias = []
+    
+    # Extraer periodos de nivel 4 (días)
+    dias_fardaria = extraer_periodos_nivel(periodos_fardaria, 4)
+    dias_relevo = extraer_periodos_nivel(periodos_relevo, 4)
+    
+    print(f"Periodos de Fardaria nivel 4: {len(dias_fardaria)}")
+    print(f"Periodos de Relevo nivel 4: {len(dias_relevo)}")
+    
+    # Buscar coincidencias
+    for fardaria in dias_fardaria:
+        for relevo in dias_relevo:
+            if fardaria['planet'] == relevo['planeta']:
+                # Convertir fechas a objetos datetime
+                fardaria_start = datetime.strptime(fardaria['start'], '%Y-%m-%d')
+                fardaria_end = datetime.strptime(fardaria['end'], '%Y-%m-%d')
+                relevo_start = datetime.strptime(relevo['start'], '%Y-%m-%d')
+                relevo_end = datetime.strptime(relevo['end'], '%Y-%m-%d')
+                
+                # Verificar si hay superposición de fechas
+                if fardaria_start <= relevo_end and fardaria_end >= relevo_start:
+                    # Calcular periodo de superposición
+                    overlap_start = max(fardaria_start, relevo_start)
+                    overlap_end = min(fardaria_end, relevo_end)
+                    
+                    coincidencias.append({
+                        'planeta': fardaria['planet'],
+                        'signo': relevo['signo'],
+                        'fardariaPeriodo': {
+                            'start': fardaria['start'],
+                            'end': fardaria['end']
+                        },
+                        'relevoPeriodo': {
+                            'start': relevo['start'],
+                            'end': relevo['end'],
+                            'signo': relevo['signo']
+                        },
+                        'overlap': {
+                            'start': overlap_start.strftime('%Y-%m-%d'),
+                            'end': overlap_end.strftime('%Y-%m-%d'),
+                            'year': overlap_start.year
+                        }
+                    })
+    
+    # Ordenar por año y fecha de inicio
+    coincidencias.sort(key=lambda x: (x['overlap']['year'], x['overlap']['start']))
+    
+    print(f"Total de coincidencias encontradas: {len(coincidencias)}")
+    
+    return coincidencias
+
 # Rutas de la API
 @app.route('/')
 def index():
@@ -159,15 +571,135 @@ def calculate_chart():
             transit_planets = mock_calculate_positions(is_natal=False, add_variation=True)
             inter_chart_aspects = calculate_aspects(natal_planets, transit_planets)
         
+        # Solo calcular coincidencias si se solicita
+        coincidencias = []
+        if data.get('calculateCoincidences', False):
+            # Encontrar planetas ASC y SOL
+            asc_pos = next((p for p in natal_planets if p["name"] == "ASC"), None)
+            sun_pos = next((p for p in natal_planets if p["name"] == "SOL"), None)
+            
+            if asc_pos and sun_pos:
+                # Determinar tipo de nacimiento
+                is_dry = is_dry_birth(sun_pos["longitude"], asc_pos["longitude"])
+                
+                # Calcular Fardarias para 7 años (para demo)
+                birth_date = datetime.strptime(data['natal']['date'], '%Y-%m-%d')
+                fardarias = calculate_fardaria_periods(birth_date, is_dry)
+                
+                # Convertir ascendente a formato para relevo
+                asc_sign_map = {
+                    "ARIES": "aries", "TAURUS": "tauro", "GEMINI": "geminis", 
+                    "CANCER": "cancer", "LEO": "leo", "VIRGO": "virgo", 
+                    "LIBRA": "libra", "SCORPIO": "escorpio", "OPHIUCHUS": "ofiuco", 
+                    "SAGITTARIUS": "sagitario", "CAPRICORN": "capricornio",
+                    "AQUARIUS": "acuario", "PISCES": "piscis"
+                }
+                
+                relevo_sign = asc_sign_map.get(asc_pos["sign"].upper(), "aries")
+                relevos = calcular_relevod_periods(birth_date, relevo_sign)
+                
+                # Buscar coincidencias
+                coincidencias = buscar_coincidencias(fardarias, relevos)
+        
         # Devolver resultados
         return jsonify({
             "natalPlanets": natal_planets,
             "transitPlanets": transit_planets,
             "internalAspects": internal_aspects,
-            "interChartAspects": inter_chart_aspects
+            "interChartAspects": inter_chart_aspects,
+            "coincidencias": coincidencias,
+            "isDry": is_dry_birth(natal_planets[0]["longitude"], natal_planets[10]["longitude"]) if len(natal_planets) > 10 else None
         })
     
     except Exception as e:
+        print(f"Error en cálculo: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/calculate_coincidences', methods=['POST'])
+def calculate_coincidences():
+    """Endpoint para calcular coincidencias entre Fardarias y Relevos para un rango de años específico."""
+    try:
+        data = request.json
+        birth_date = data.get('birthDate')
+        is_dry = data.get('isDry')
+        ascendente = data.get('ascendente')
+        start_year = data.get('startYear')
+        end_year = data.get('endYear')
+        
+        if not all([birth_date, ascendente]) or is_dry is None:
+            return jsonify({"error": "Faltan datos necesarios"}), 400
+        
+        # Validar años
+        if start_year is None:
+            start_year = datetime.strptime(birth_date, '%Y-%m-%d').year
+        if end_year is None:
+            end_year = start_year + 5
+        
+        # Asegurar que los años sean enteros
+        start_year = int(start_year)
+        end_year = int(end_year)
+        
+        # Limitar el rango a un máximo razonable
+        if end_year - start_year > 30:
+            end_year = start_year + 30
+        
+        print(f"Calculando coincidencias para: {birth_date}, {is_dry}, {ascendente}, {start_year}-{end_year}")
+        
+        # Calcular Fardarias para el rango especificado
+        fardarias = calculate_fardaria_periods(birth_date, is_dry, start_year, end_year)
+        
+        # Calcular Relevo Zodiacal para el rango especificado
+        relevos = calcular_relevod_periods(birth_date, ascendente, start_year, end_year)
+        
+        # Calcular coincidencias
+        coincidencias = buscar_coincidencias(fardarias, relevos)
+        
+        return jsonify({
+            "coincidencias": coincidencias,
+            "startYear": start_year,
+            "endYear": end_year
+        })
+        
+    except Exception as e:
+        print(f"Error calculando coincidencias: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/coincidence_transit', methods=['POST'])
+def coincidence_transit():
+    """Endpoint para calcular posiciones planetarias para una fecha de coincidencia específica."""
+    try:
+        data = request.json
+        date = data.get('date')
+        
+        if not date:
+            return jsonify({"error": "Fecha no especificada"}), 400
+        
+        # Simular posiciones planetarias para la fecha de coincidencia
+        try:
+            coincidence_date = datetime.strptime(date, '%Y-%m-%d')
+            
+            # Usar un factor determinista para variaciones basado en la fecha
+            day_of_year = coincidence_date.timetuple().tm_yday
+            
+            # Generar posiciones planetarias
+            transit_positions = mock_calculate_positions(is_natal=False, add_variation=False)
+            
+            # Aplicar variación determinista basada en la fecha
+            for planet in transit_positions:
+                variation = (day_of_year % 30) / 15.0  # Variación máxima de 2 grados
+                planet["longitude"] = (planet["longitude"] + variation) % 360
+                planet["sign"] = get_sign_for_longitude(planet["longitude"])
+                
+            return jsonify({
+                "positions": transit_positions
+            })
+            
+        except Exception as inner_e:
+            print(f"Error procesando fecha de coincidencia: {str(inner_e)}")
+            return jsonify({"error": f"Error procesando fecha: {str(inner_e)}"}), 500
+            
+    except Exception as e:
+        print(f"Error en el cálculo de coincidencia: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/health')
@@ -176,938 +708,3 @@ def health_check():
     return jsonify({"status": "ok", "service": "carta-astral-api"})
 
 # Plantilla HTML para la aplicación
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Carta Astral Responsive</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Arial, sans-serif;
-            margin: 0;
-            padding: 15px;
-            background-color: #f0f0f0;
-            overflow-x: hidden;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-        }
-
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .toggle-container {
-            display: flex;
-            align-items: center;
-        }
-
-        /* Estilo para el switch toggle */
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 60px;
-            height: 34px;
-        }
-
-        .switch input { 
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: .4s;
-            border-radius: 34px;
-        }
-
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 26px;
-            width: 26px;
-            left: 4px;
-            bottom: 4px;
-            background-color: white;
-            transition: .4s;
-            border-radius: 50%;
-        }
-
-        input:checked + .slider {
-            background-color: #2196F3;
-        }
-
-        input:focus + .slider {
-            box-shadow: 0 0 1px #2196F3;
-        }
-
-        input:checked + .slider:before {
-            transform: translateX(26px);
-        }
-
-        /* Contenedor principal de la carta astral */
-        .chart-container {
-            position: relative;
-            width: 100%;
-            background-color: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            margin-bottom: 15px;
-            overflow: hidden;
-        }
-
-        /* Asegurando que el SVG mantenga la proporción adecuada */
-        .chart-container::before {
-            content: "";
-            display: block;
-            padding-top: 100%; /* Proporción 1:1 */
-        }
-
-        .chart-svg {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            touch-action: none;
-        }
-
-        /* Panel de información */
-        .info-panel {
-            background-color: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            padding: 15px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .info-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 10px;
-            margin-bottom: 10px;
-        }
-
-        .selected-info {
-            padding: 10px;
-            background-color: #e6f7ff;
-            border-radius: 5px;
-        }
-
-        .tooltip {
-            position: absolute;
-            background-color: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 14px;
-            pointer-events: none;
-            z-index: 100;
-            display: none;
-        }
-
-        /* Mejoras para móviles */
-        @media (max-width: 768px) {
-            body {
-                padding: 10px;
-            }
-            
-            h1 {
-                font-size: 1.5rem;
-            }
-            
-            .chart-container {
-                margin-bottom: 10px;
-            }
-            
-            .info-panel {
-                max-height: 150px;
-            }
-        }
-
-        /* Estilos para controles de entrada de datos */
-        .input-container {
-            background-color: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            padding: 15px;
-            margin-bottom: 15px;
-        }
-
-        .form-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            margin-bottom: 15px;
-        }
-
-        .input-group {
-            flex: 1;
-            min-width: 200px;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-
-        input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-        }
-
-        .btn {
-            padding: 10px 20px;
-            background-color: #2196F3;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-
-        .btn:hover {
-            background-color: #0b7dda;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Carta Astral</h1>
-        
-        <!-- Controles de entrada de datos -->
-        <div class="input-container">
-            <h2>Datos de Nacimiento</h2>
-            <div class="form-group">
-                <div class="input-group">
-                    <label for="city">Ciudad:</label>
-                    <input type="text" id="city" placeholder="Madrid, España">
-                </div>
-                <div class="input-group">
-                    <label for="date">Fecha:</label>
-                    <input type="date" id="date">
-                </div>
-                <div class="input-group">
-                    <label for="time">Hora:</label>
-                    <input type="time" id="time">
-                </div>
-            </div>
-            
-            <div class="toggle-container" style="margin-bottom: 15px;">
-                <label class="switch">
-                    <input type="checkbox" id="show-transits" checked>
-                    <span class="slider"></span>
-                </label>
-                <span style="margin-left: 10px;">Mostrar Tránsitos</span>
-            </div>
-            
-            <div id="transit-controls">
-                <h3>Datos de Tránsito</h3>
-                <div class="form-group">
-                    <div class="input-group">
-                        <label for="transit-city">Ciudad:</label>
-                        <input type="text" id="transit-city" placeholder="Madrid, España">
-                    </div>
-                    <div class="input-group">
-                        <label for="transit-date">Fecha:</label>
-                        <input type="date" id="transit-date">
-                    </div>
-                    <div class="input-group">
-                        <label for="transit-time">Hora:</label>
-                        <input type="time" id="transit-time">
-                    </div>
-                </div>
-            </div>
-            
-            <button id="calculate-btn" class="btn">Calcular Carta</button>
-        </div>
-        
-        <header>
-            <h2>Visualización de Carta</h2>
-            <div class="toggle-container">
-                <label class="switch">
-                    <input type="checkbox" id="toggle-transits" checked>
-                    <span class="slider"></span>
-                </label>
-                <span style="margin-left: 10px;">Tránsitos</span>
-            </div>
-        </header>
-        
-        <div class="chart-container">
-            <svg id="chart" class="chart-svg" viewBox="0 0 600 600" preserveAspectRatio="xMidYMid meet">
-                <!-- El contenido SVG se generará dinámicamente mediante JavaScript -->
-            </svg>
-            <div id="tooltip" class="tooltip"></div>
-        </div>
-        
-        <div class="info-panel">
-            <div class="info-header">
-                <h3>Información</h3>
-                <span id="info-toggle" style="cursor: pointer;">▼</span>
-            </div>
-            <div id="info-content">
-                <div id="selected-info" class="selected-info">
-                    Selecciona un planeta o aspecto para ver detalles
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // Constantes
-        const DIMENSIONS = {
-            centerX: 300,
-            centerY: 300,
-            radius: 280,         // Aumentado para maximizar el espacio
-            innerRadius: 120,    // Ajustado para mejorar el espacio entre los elementos
-            glyphRadius: 265     // Ajustado para posicionar los símbolos del zodiaco
-        };
-
-        const SIGNS = [
-            {name: 'ARIES', start: 354, length: 36, symbol: '♈', color: '#FFE5E5'},
-            {name: 'TAURUS', start: 30, length: 30, symbol: '♉', color: '#E5FFE5'},
-            {name: 'GEMINI', start: 60, length: 30, symbol: '♊', color: '#FFFFE5'},
-            {name: 'CANCER', start: 90, length: 30, symbol: '♋', color: '#E5FFFF'},
-            {name: 'LEO', start: 120, length: 30, symbol: '♌', color: '#FFE5E5'},
-            {name: 'VIRGO', start: 150, length: 36, symbol: '♍', color: '#E5FFE5'},
-            {name: 'LIBRA', start: 186, length: 24, symbol: '♎', color: '#FFFFE5'},
-            {name: 'SCORPIO', start: 210, length: 30, symbol: '♏', color: '#E5FFFF'},
-            {name: 'OPHIUCHUS', start: 240, length: 12, symbol: '⛎', color: '#FFFFE5'},
-            {name: 'SAGITTARIUS', start: 252, length: 18, symbol: '♐', color: '#FFE5E5'},
-            {name: 'CAPRICORN', start: 270, length: 36, symbol: '♑', color: '#E5FFE5'},
-            {name: 'AQUARIUS', start: 306, length: 18, symbol: '♒', color: '#FFFFE5'},
-            {name: 'PEGASUS', start: 324, length: 6, symbol: '∩', color: '#E5FFFF'},
-            {name: 'PISCES', start: 330, length: 24, symbol: '♓', color: '#E5FFFF'}
-        ];
-
-        const PLANET_SYMBOLS = {
-            'SOL': '☉',
-            'LUNA': '☽',
-            'MERCURIO': '☿',
-            'VENUS': '♀',
-            'MARTE': '♂',
-            'JÚPITER': '♃',
-            'SATURNO': '♄',
-            'URANO': '♅',
-            'NEPTUNO': '♆',
-            'PLUTÓN': '♇',
-            'ASC': 'ASC',
-            'MC': 'MC',
-            'DSC': 'DSC',
-            'IC': 'IC'
-        };
-
-        const ASPECTS = {
-            CONJUNCTION: { angle: 0, orb: 2, color: '#000080', name: 'Armónico Relevante' },
-            SEXTILE: { angle: 60, orb: 2, color: '#000080', name: 'Armónico Relevante' },
-            SQUARE: { angle: 90, orb: 2, color: '#FF0000', name: 'Inarmónico Relevante' },
-            TRINE: { angle: 120, orb: 2, color: '#000080', name: 'Armónico Relevante' },
-            OPPOSITION: { angle: 180, orb: 2, color: '#000080', name: 'Armónico Relevante' }
-        };
-
-        const COLORS = {
-            RED: '#FF0000',
-            GREEN: '#00FF00',
-            BLUE: '#0000FF',
-            YELLOW: '#FFFF00'
-        };
-
-        // Estado global
-        let natalPlanets = [];
-        let transitPlanets = [];
-        let internalAspects = [];
-        let interChartAspects = [];
-        let showTransits = true;
-        let selectedPlanet = null;
-        let selectedAspect = null;
-        
-        // Referencias a elementos DOM
-        const chartSvg = document.getElementById('chart');
-        const tooltipEl = document.getElementById('tooltip');
-        const toggleTransitsCheckbox = document.getElementById('toggle-transits');
-        const showTransitsCheckbox = document.getElementById('show-transits');
-        const transitControlsDiv = document.getElementById('transit-controls');
-        const selectedInfoEl = document.getElementById('selected-info');
-        const infoToggleEl = document.getElementById('info-toggle');
-        const infoContentEl = document.getElementById('info-content');
-        const calculateBtn = document.getElementById('calculate-btn');
-        const cityInput = document.getElementById('city');
-        const dateInput = document.getElementById('date');
-        const timeInput = document.getElementById('time');
-        const transitCityInput = document.getElementById('transit-city');
-        const transitDateInput = document.getElementById('transit-date');
-        const transitTimeInput = document.getElementById('transit-time');
-
-        // Establecer fechas actuales por defecto
-        const today = new Date();
-        const dateStr = today.toISOString().split('T')[0];
-        const timeStr = today.toTimeString().slice(0, 5);
-        
-        dateInput.value = dateStr;
-        timeInput.value = timeStr;
-        transitDateInput.value = dateStr;
-        transitTimeInput.value = timeStr;
-
-        // Event listeners
-        toggleTransitsCheckbox.addEventListener('change', function() {
-            showTransits = this.checked;
-            renderChart();
-        });
-        
-        showTransitsCheckbox.addEventListener('change', function() {
-            transitControlsDiv.style.display = this.checked ? 'block' : 'none';
-        });
-        
-        calculateBtn.addEventListener('click', calculateChart);
-        
-        infoToggleEl.addEventListener('click', function() {
-            if (infoContentEl.style.display === 'none') {
-                infoContentEl.style.display = 'block';
-                infoToggleEl.textContent = '▼';
-            } else {
-                infoContentEl.style.display = 'none';
-                infoToggleEl.textContent = '▶';
-            }
-        });
-
-        // Calcular la carta
-        async function calculateChart() {
-            try {
-                // Recoger datos del formulario
-                const natalData = {
-                    city: cityInput.value,
-                    date: dateInput.value,
-                    time: timeInput.value
-                };
-                
-                const transitData = {
-                    city: transitCityInput.value,
-                    date: transitDateInput.value,
-                    time: transitTimeInput.value
-                };
-                
-                // Realizar petición al servidor
-                const response = await fetch('/api/calculate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        natal: natalData,
-                        transit: transitData,
-                        showTransits: showTransitsCheckbox.checked
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Error en la petición al servidor');
-                }
-                
-                const data = await response.json();
-                
-                // Actualizar datos
-                natalPlanets = data.natalPlanets;
-                transitPlanets = data.transitPlanets;
-                internalAspects = data.internalAspects;
-                interChartAspects = data.interChartAspects;
-                
-                // Renderizar la carta
-                renderChart();
-                
-            } catch (error) {
-                console.error('Error:', error);
-                alert('Error al calcular la carta: ' + error.message);
-            }
-        }
-
-        // Función para calcular aspectos entre planetas
-        function calculateAspects(planets1, planets2 = null) {
-            const aspects = [];
-            
-            // Si solo pasamos un conjunto de planetas, calculamos aspectos internos
-            if (!planets2) {
-                planets2 = planets1;
-            }
-            
-            // Filtramos planetas para incluir solo los tradicionales
-            const validPlanets1 = planets1.filter(p => 
-                ["SOL", "LUNA", "MERCURIO", "VENUS", "MARTE", "JÚPITER", "SATURNO"].includes(p.name)
-            );
-            
-            const validPlanets2 = planets2.filter(p => 
-                ["SOL", "LUNA", "MERCURIO", "VENUS", "MARTE", "JÚPITER", "SATURNO"].includes(p.name)
-            );
-
-            // Si estamos calculando aspectos entre dos cartas diferentes, usamos todos los planetas
-            // Si estamos calculando aspectos dentro de la misma carta, evitamos duplicados
-            for (let i = 0; i < validPlanets1.length; i++) {
-                const startJ = planets1 === planets2 ? i + 1 : 0;
-                for (let j = startJ; j < validPlanets2.length; j++) {
-                    const planet1 = validPlanets1[i];
-                    const planet2 = validPlanets2[j];
-                    
-                    // Evitar comparar un planeta consigo mismo
-                    if (planet1 === planet2) continue;
-                    
-                    let diff = Math.abs(planet1.longitude - planet2.longitude);
-                    if (diff > 180) diff = 360 - diff;
-                    
-                    for (const aspectType in ASPECTS) {
-                        const aspect = ASPECTS[aspectType];
-                        if (Math.abs(diff - aspect.angle) <= aspect.orb) {
-                            aspects.push({
-                                planet1: planet1.name,
-                                planet2: planet2.name,
-                                type: aspectType,
-                                angle: diff,
-                                color: aspect.color,
-                                isInterChart: planets1 !== planets2
-                            });
-                            break;
-                        }
-                    }
-                }
-            }
-            return aspects;
-        }
-
-        // Función para renderizar la carta
-        function renderChart() {
-            // Limpiar SVG
-            chartSvg.innerHTML = '';
-            
-            // Dibujar círculo exterior
-            createSvgElement('circle', {
-                cx: DIMENSIONS.centerX,
-                cy: DIMENSIONS.centerY,
-                r: DIMENSIONS.radius,
-                fill: 'none',
-                stroke: '#333',
-                'stroke-width': 2
-            }, chartSvg);
-            
-            // Dibujar signos zodiacales
-            SIGNS.forEach(sign => {
-                const midAngle = ((sign.start + sign.length/2 - 90) * Math.PI) / 180;
-                const glyphX = DIMENSIONS.centerX + DIMENSIONS.glyphRadius * Math.cos(midAngle);
-                const glyphY = DIMENSIONS.centerY + DIMENSIONS.glyphRadius * Math.sin(midAngle);
-                
-                // Dibujar sector
-                const path = createSvgElement('path', {
-                    d: createArcPath(sign.start, sign.start + sign.length),
-                    fill: sign.color,
-                    stroke: '#333',
-                    'stroke-width': 1
-                }, chartSvg);
-                
-                // Añadir símbolo
-                const text = createSvgElement('text', {
-                    x: glyphX,
-                    y: glyphY,
-                    'text-anchor': 'middle',
-                    'dominant-baseline': 'middle',
-                    'font-size': 20
-                }, chartSvg);
-                text.textContent = sign.symbol;
-            });
-            
-            // Dibujar círculo interior
-            createSvgElement('circle', {
-                cx: DIMENSIONS.centerX,
-                cy: DIMENSIONS.centerY,
-                r: DIMENSIONS.innerRadius,
-                fill: 'white',
-                stroke: '#333',
-                'stroke-width': 1
-            }, chartSvg);
-            
-            // Dibujar aspectos
-            const aspectsToDisplay = [
-                ...internalAspects,
-                ...(showTransits ? interChartAspects : [])
-            ];
-            
-            aspectsToDisplay.forEach((aspect, index) => {
-                // Determinar los planetas y sus posiciones
-                const planet1Source = aspect.isInterChart ? natalPlanets : natalPlanets;
-                const planet2Source = aspect.isInterChart ? transitPlanets : natalPlanets;
-                
-                const planet1 = planet1Source.find(p => p.name === aspect.planet1);
-                const planet2 = planet2Source.find(p => p.name === aspect.planet2);
-                
-                if (!planet1 || !planet2) return;
-                
-                const angle1 = (planet1.longitude - 90) * Math.PI / 180;
-                const angle2 = (planet2.longitude - 90) * Math.PI / 180;
-                
-                const radius = DIMENSIONS.innerRadius;
-                // Para planetas de tránsito, usamos un radio ligeramente mayor al renderizar
-                const radius2 = aspect.isInterChart ? DIMENSIONS.innerRadius + 60 : radius;
-                
-                const x1 = DIMENSIONS.centerX + radius * Math.cos(angle1);
-                const y1 = DIMENSIONS.centerY + radius * Math.sin(angle1);
-                const x2 = DIMENSIONS.centerX + radius2 * Math.cos(angle2);
-                const y2 = DIMENSIONS.centerY + radius2 * Math.sin(angle2);
-                
-                const line = createSvgElement('line', {
-                    x1: x1,
-                    y1: y1,
-                    x2: x2,
-                    y2: y2,
-                    stroke: aspect.color,
-                    'stroke-width': selectedAspect === aspect ? "3" : "1",
-                    'stroke-dasharray': aspect.isInterChart ? "3,3" : "none",
-                    'class': 'aspect-line',
-                    'data-aspect-index': index
-                }, chartSvg);
-                
-                line.addEventListener('click', () => {
-                    selectAspect(aspect);
-                });
-                
-                line.addEventListener('mouseover', (e) => {
-                    showTooltip(`${aspect.planet1} ${ASPECTS[aspect.type].name} ${aspect.planet2} (${aspect.angle.toFixed(2)}°)`, e);
-                });
-                
-                line.addEventListener('mouseout', hideTooltip);
-            });
-            
-            // Dibujar planetas natales
-            natalPlanets.forEach((planet) => {
-                const adjustment = adjustPlanetLabel(planet, natalPlanets, DIMENSIONS.innerRadius - 20);
-                const adjustedAngle = ((planet.longitude + adjustment.angleOffset - 90) * Math.PI) / 180;
-                const x = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(adjustedAngle);
-                const y = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(adjustedAngle);
-                
-                const labelX = DIMENSIONS.centerX + adjustment.radius * Math.cos(adjustedAngle);
-                const labelY = DIMENSIONS.centerY + adjustment.radius * Math.sin(adjustedAngle);
-                
-                const isSelected = selectedPlanet && 
-                                    selectedPlanet.name === planet.name && 
-                                    selectedPlanet.isNatal;
-                
-                const color = getPlanetColor(planet.name, planet.longitude);
-                
-                // Dibujar círculo del planeta
-                const circle = createSvgElement('circle', {
-                    cx: x,
-                    cy: y,
-                    r: isSelected ? "8" : "6",
-                    fill: color,
-                    stroke: '#000',
-                    'stroke-width': isSelected ? "2" : "1",
-                    'class': 'planet-circle',
-                    'data-planet': planet.name,
-                    'data-is-natal': 'true'
-                }, chartSvg);
-                
-                // Dibujar símbolo del planeta
-                const text = createSvgElement('text', {
-                    x: labelX,
-                    y: labelY,
-                    'text-anchor': 'middle',
-                    'dominant-baseline': 'middle',
-                    'font-size': isSelected ? "18" : "16",
-                    'font-weight': 'bold',
-                    'fill': '#111',
-                    'class': 'planet-symbol',
-                    'data-planet': planet.name,
-                    'data-is-natal': 'true'
-                }, chartSvg);
-                text.textContent = PLANET_SYMBOLS[planet.name] || planet.name;
-                
-                // Añadir eventos
-                [circle, text].forEach(element => {
-                    element.addEventListener('click', () => {
-                        selectPlanet(planet.name, true);
-                    });
-                    
-                    element.addEventListener('mouseover', (e) => {
-                        showTooltip(`${planet.name}: ${planet.longitude.toFixed(2)}° ${planet.sign}`, e);
-                    });
-                    
-                    element.addEventListener('mouseout', hideTooltip);
-                });
-            });
-            
-            // Dibujar planetas de tránsito
-            if (showTransits && transitPlanets.length > 0) {
-                transitPlanets.forEach((planet) => {
-                    const transitRadius = DIMENSIONS.innerRadius + 60;
-                    
-                    const adjustment = adjustPlanetLabel(planet, transitPlanets, transitRadius + 20);
-                    const adjustedAngle = ((planet.longitude + adjustment.angleOffset - 90) * Math.PI) / 180;
-                    
-                    const x = DIMENSIONS.centerX + transitRadius * Math.cos(adjustedAngle);
-                    const y = DIMENSIONS.centerY + transitRadius * Math.sin(adjustedAngle);
-                    
-                    const labelX = DIMENSIONS.centerX + (transitRadius + 20) * Math.cos(adjustedAngle);
-                    const labelY = DIMENSIONS.centerY + (transitRadius + 20) * Math.sin(adjustedAngle);
-                    
-                    const isSelected = selectedPlanet && 
-                                        selectedPlanet.name === planet.name && 
-                                        !selectedPlanet.isNatal;
-                    
-                    const color = getPlanetColor(planet.name, planet.longitude);
-                    
-                    // Dibujar círculo del planeta
-                    const circle = createSvgElement('circle', {
-                        cx: x,
-                        cy: y,
-                        r: isSelected ? "8" : "6",
-                        fill: color,
-                        stroke: '#000',
-                        'stroke-width': isSelected ? "2" : "1",
-                        'class': 'planet-circle',
-                        'data-planet': planet.name,
-                        'data-is-natal': 'false'
-                    }, chartSvg);
-                    
-                    // Dibujar símbolo del planeta
-                    const text = createSvgElement('text', {
-                        x: labelX,
-                        y: labelY,
-                        'text-anchor': 'middle',
-                        'dominant-baseline': 'middle',
-                        'font-size': isSelected ? "18" : "16",
-                        'font-weight': 'bold',
-                        'fill': '#555',
-                        'class': 'planet-symbol',
-                        'data-planet': planet.name,
-                        'data-is-natal': 'false'
-                    }, chartSvg);
-                    text.textContent = PLANET_SYMBOLS[planet.name] || planet.name;
-                    
-                    // Añadir eventos
-                    [circle, text].forEach(element => {
-                        element.addEventListener('click', () => {
-                            selectPlanet(planet.name, false);
-                        });
-                        
-                        element.addEventListener('mouseover', (e) => {
-                            showTooltip(`${planet.name} (Tránsito): ${planet.longitude.toFixed(2)}° ${planet.sign}`, e);
-                        });
-                        
-                        element.addEventListener('mouseout', hideTooltip);
-                    });
-                });
-            }
-            
-            // Actualizar panel de información
-            updateInfoPanel();
-        }
-
-        // Función para actualizar el panel de información
-        function updateInfoPanel() {
-            if (selectedPlanet) {
-                const planetSource = selectedPlanet.isNatal ? natalPlanets : transitPlanets;
-                const planet = planetSource.find(p => p.name === selectedPlanet.name);
-                
-                if (planet) {
-                    selectedInfoEl.innerHTML = `
-                        <h4 class="font-bold">${planet.name} ${!selectedPlanet.isNatal ? '(Tránsito)' : ''}</h4>
-                        <div>${planet.longitude.toFixed(2)}° ${planet.sign}</div>
-                    `;
-                }
-            } else if (selectedAspect) {
-                const aspectName = ASPECTS[selectedAspect.type]?.name || selectedAspect.type;
-                selectedInfoEl.innerHTML = `
-                    <div class="font-bold">
-                        ${selectedAspect.planet1} ${aspectName} ${selectedAspect.planet2}
-                    </div>
-                    <div>${selectedAspect.angle.toFixed(2)}°</div>
-                `;
-            } else {
-                selectedInfoEl.textContent = 'Selecciona un planeta o aspecto para ver detalles';
-            }
-        }
-
-        // Funciones para selección
-        function selectPlanet(planetName, isNatal) {
-            if (selectedPlanet && selectedPlanet.name === planetName && selectedPlanet.isNatal === isNatal) {
-                selectedPlanet = null;
-            } else {
-                selectedPlanet = { name: planetName, isNatal };
-                selectedAspect = null;
-            }
-            
-            renderChart();
-        }
-
-        function selectAspect(aspect) {
-            if (selectedAspect === aspect) {
-                selectedAspect = null;
-            } else {
-                selectedAspect = aspect;
-                selectedPlanet = null;
-            }
-            
-            renderChart();
-        }
-
-        // Funciones para tooltip
-        function showTooltip(text, event) {
-            tooltipEl.textContent = text;
-            tooltipEl.style.display = 'block';
-            
-            const rect = chartSvg.getBoundingClientRect();
-            const x = event.clientX - rect.left;
-            const y = event.clientY - rect.top;
-            
-            tooltipEl.style.left = (x + 10) + 'px';
-            tooltipEl.style.top = (y + 10) + 'px';
-        }
-
-        function hideTooltip() {
-            tooltipEl.style.display = 'none';
-        }
-
-        // Funciones auxiliares
-        function createSvgElement(tag, attributes = {}, parent = null) {
-            const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
-            
-            for (const [attr, value] of Object.entries(attributes)) {
-                element.setAttribute(attr, value);
-            }
-            
-            if (parent) {
-                parent.appendChild(element);
-            }
-            
-            return element;
-        }
-
-        function createArcPath(startAngle, endAngle) {
-            const start = ((startAngle - 90) * Math.PI) / 180;
-            const end = ((endAngle - 90) * Math.PI) / 180;
-            
-            const x1 = DIMENSIONS.centerX + DIMENSIONS.radius * Math.cos(start);
-            const y1 = DIMENSIONS.centerY + DIMENSIONS.radius * Math.sin(start);
-            const x2 = DIMENSIONS.centerX + DIMENSIONS.radius * Math.cos(end);
-            const y2 = DIMENSIONS.centerY + DIMENSIONS.radius * Math.sin(end);
-            
-            const x1Inner = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(start);
-            const y1Inner = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(start);
-            const x2Inner = DIMENSIONS.centerX + DIMENSIONS.innerRadius * Math.cos(end);
-            const y2Inner = DIMENSIONS.centerY + DIMENSIONS.innerRadius * Math.sin(end);
-            
-            const largeArcFlag = end - start <= Math.PI ? "0" : "1";
-            
-            return `M ${x1} ${y1} A ${DIMENSIONS.radius} ${DIMENSIONS.radius} 0 ${largeArcFlag} 1 ${x2} ${y2} L ${x2Inner} ${y2Inner} A ${DIMENSIONS.innerRadius} ${DIMENSIONS.innerRadius} 0 ${largeArcFlag} 0 ${x1Inner} ${y1Inner} Z`;
-        }
-
-        function adjustPlanetLabel(planet, allPlanets, radius) {
-            const angleDiff = 7;
-            
-            const nearbyPlanets = allPlanets.filter(p => {
-                if (p.name === planet.name) return false;
-                let diff = Math.abs(p.longitude - planet.longitude);
-                if (diff > 180) diff = 360 - diff;
-                return diff < angleDiff;
-            });
-            
-            if (nearbyPlanets.length === 0) {
-                return {
-                    radius: radius,
-                    angleOffset: 0
-                };
-            }
-            
-            const isLower = planet.name < nearbyPlanets[0].name;
-            const radiusOffset = isLower ? 0 : 15;
-            const angleOffset = isLower ? -1 : 1;
-            
-            return {
-                radius: radius + radiusOffset,
-                angleOffset: angleOffset * 3
-            };
-        }
-
-        function getPlanetColor(planet, longitude) {
-            if (planet === 'ASC' || planet === 'MC' || planet === 'DSC' || planet === 'IC') return '#000000';
-            
-            if (planet === 'JÚPITER') {
-                if ((longitude >= 306.00 && longitude <= 360.00) || (longitude >= 0.00 && longitude <= 150.00)) 
-                    return COLORS.BLUE;
-                if (longitude > 150.00 && longitude < 306.00) 
-                    return COLORS.RED;
-            }
-
-            if (planet === 'SATURNO') {
-                if ((longitude >= 330.00 && longitude <= 360.00) || (longitude >= 0.00 && longitude <= 150.00))
-                    return COLORS.YELLOW;
-                if (longitude > 240.00 && longitude <= 252.00) return COLORS.YELLOW;
-                if (longitude > 252.00 && longitude <= 330.00) return COLORS.RED;
-                if (longitude > 150.00 && longitude <= 240.00) return COLORS.RED;
-                return COLORS.YELLOW;
-            }
-
-            if (longitude > 150.00 && longitude <= 330.00) {
-                switch(planet) {
-                    case 'SOL': case 'MERCURIO': case 'URANO': return COLORS.GREEN;
-                    case 'VENUS': case 'LUNA': return COLORS.YELLOW;
-                    case 'MARTE': case 'PLUTÓN': return COLORS.BLUE;
-                    case 'NEPTUNO': return COLORS.RED;
-                    default: return '#000000';
-                }
-            } else {
-                switch(planet) {
-                    case 'SOL': case 'MARTE': case 'PLUTÓN': return COLORS.RED;
-                    case 'VENUS': return COLORS.GREEN;
-                    case 'MERCURIO': case 'SATURNO': case 'URANO': return COLORS.YELLOW;
-                    case 'LUNA': case 'NEPTUNO': return COLORS.BLUE;
-                    default: return '#000000';
-                }
-            }
-        }
-
-        // Iniciar la aplicación con datos de ejemplo
-        calculateChart();
-    </script>
-</body>
-</html>
-"""
-
-# Punto de entrada de la aplicación
-if __name__ == "__main__":
-    # Configurar el puerto - necesario para Render.com
-    port = int(os.environ.get("PORT", 5000))
-    
-    # Mensaje de inicio
-    print(f"Iniciando servidor en puerto {port}")
-    print(f"URL del servidor: http://0.0.0.0:{port}")
-    print(f"Usar CTRL+C para detener el servidor")
-    
-    # Registrar endpoint de salud
-    print(f"Endpoint de salud disponible en: http://0.0.0.0:{port}/health")
-    
-    # Esta línea informa que estamos escuchando en todos los interfaces
-    print("Escuchando en todas las interfaces (0.0.0.0)...")
-    
-    # Mensaje para depuración
-    sys.stdout.flush()
-    
-    # Ejecutar aplicación
-    app.run(host="0.0.0.0", port=port, debug=False)
