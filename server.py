@@ -1506,7 +1506,7 @@ if __name__ == '__main__':
     # Detectar si estamos en Render
     is_render = os.environ.get('RENDER', False)
     # En Render, el puerto se proporciona como variable de entorno
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 10001))
     
     print(f"Iniciando servidor en puerto {port}, entorno: {'Render' if is_render else 'Local'}")
     
